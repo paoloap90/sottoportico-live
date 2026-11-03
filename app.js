@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { BEERS, eventsFrom, eur, abvTxt } from './data.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -58,7 +59,9 @@ function tex(path, { srgb = true, rep = null, aniso = 8 } = {}) {
 
 const b64buf = async (url) => { if (/\.b64\.json$/.test(url) && window.SP_STANDALONE) return (await fetch(url.replace(/\.b64\.json$/, '.bin'))).arrayBuffer(); const j = await (await fetch(url)).json(); const bin = atob(j.b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
 // environment lighting baked from the same sky
-{ const pm = new THREE.PMREMGenerator(renderer); const es = new THREE.Scene(); const sk2 = new Sky(); sk2.scale.setScalar(50); Object.keys(sky.material.uniforms).forEach(k => sk2.material.uniforms[k].value = sky.material.uniforms[k].value); es.add(sk2); scene.environment = pm.fromScene(es, 0.02).texture; }
+const pmrem = new THREE.PMREMGenerator(renderer); const envScene = new THREE.Scene(); const sk2 = new Sky(); sk2.scale.setScalar(50); envScene.add(sk2); let envRT = null;
+function bakeEnv() { Object.keys(sky.material.uniforms).forEach(k => { const v = sky.material.uniforms[k].value; if (v && v.isVector3) sk2.material.uniforms[k].value.copy(v); else sk2.material.uniforms[k].value = v; }); const rt = pmrem.fromScene(envScene, 0.02); scene.environment = rt.texture; if (envRT) envRT.dispose(); envRT = rt; }
+bakeEnv();
 
 // ---------------- materials ----------------
 const STD = (o) => new THREE.MeshStandardMaterial(Object.assign({ roughness: 0.8, metalness: 0, envMapIntensity: 0.12 }, o));
@@ -83,6 +86,7 @@ const mGrass = STD({ map: tex('tex/grasslight-big.jpg', { rep: [6, 2] }), roughn
 const mSoil = STD({ color: 0x3a2b20, roughness: 1 });
 const mRust = STD({ color: 0x5e4334, metalness: 0.5, roughness: 0.7 });
 const mCeil = STD({ color: 0xcfc9bf, roughness: 0.95 });
+const nightLights = [], towerMats = [];
 const mDarkCeil = STD({ color: 0x2b2524, roughness: 0.9 });
 
 function box(w, h, d, mat, x, y, z, parent = scene, cast = true, recv = true) {
@@ -147,10 +151,17 @@ const ochreTex = canvasTex(512, 1024, (g, w, h) => {
   for (let f = 0; f < 16; f++) { const y = f * 64; g.fillStyle = '#d9cfb6'; g.fillRect(0, y + 44, w, 14); g.fillStyle = '#4a4740'; for (let x = 12; x < w; x += 64) { g.fillRect(x, y + 8, 40, 34); } g.fillStyle = '#8f7f60'; g.fillRect(0, y + 58, w, 6); if ((f * 5) % 3 === 0) { g.fillStyle = '#e7b56f'; g.fillRect(140, y + 10, 40, 30); } }
 });
 ochreTex.wrapS = ochreTex.wrapT = THREE.RepeatWrapping;
+const _lit = new Map();
+function litMap(t) { // night windows: only the dark glazing glows, in random blocks
+  if (_lit.has(t)) return _lit.get(t); const src = t.image, w = src.width, h = src.height; const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const g = cv.getContext('2d'); g.drawImage(src, 0, 0);
+  const d = g.getImageData(0, 0, w, h), px = d.data, on = {};
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4, lum = (px[i] + px[i + 1] + px[i + 2]) / 765, key = ((y / 32) | 0) * 999 + ((x / 32) | 0); if (!(key in on)) on[key] = Math.random() < 0.32 ? 0.6 + Math.random() * 0.4 : 0; const v = lum < 0.32 ? on[key] : 0; px[i] = 255 * v; px[i + 1] = 200 * v; px[i + 2] = 130 * v; }
+  g.putImageData(d, 0, 0); const nt = new THREE.CanvasTexture(cv); nt.colorSpace = THREE.SRGBColorSpace; nt.wrapS = nt.wrapT = THREE.RepeatWrapping; _lit.set(t, nt); return nt;
+}
 function tower(x0, x1, z0, z1, yb, yt, texSrc, rep = 1.25) {
   const w = x1 - x0, d = z1 - z0, h = yt - yb;
   const mk = (len) => { const t = texSrc.clone(); t.needsUpdate = true; t.repeat.set(len / (rep * 4), h / 48); return STD({ map: t, roughness: 0.85 }); };
-  const mx = mk(d), mz = mk(w), mtop = STD({ color: 0x9a948a }); mx.color.setHex(0xc9c4ba); mz.color.setHex(0xc9c4ba);
+  const mx = mk(d), mz = mk(w), mtop = STD({ color: 0x9a948a }); mx.color.setHex(0xc9c4ba); mz.color.setHex(0xc9c4ba); for (const m of [mx, mz]) { const em = litMap(texSrc).clone(); em.needsUpdate = true; em.repeat.copy(m.map.repeat); m.emissiveMap = em; m.emissive.setHex(0xffc982); m.emissiveIntensity = 0; towerMats.push(m); }
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), [mx, mx, mtop, mtop, mz, mz]);
   m.position.set((x0 + x1) / 2, yb + h / 2, (z0 + z1) / 2); m.castShadow = true; m.receiveShadow = true; scene.add(m); return m;
 }
@@ -219,7 +230,10 @@ for (let i = 0; i < 5; i++) { const x = 0.5 + i * 1.05; box(0.03, 0.9, 0.03, mOa
 { const g = new THREE.Group(); g.position.set(6.3, 2.75, 10.9); scene.add(g); box(0.02, 0.35, 0.02, mBlackMetal, 0, 0.42, 0, g); const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.05, 48), STD({ color: 0x161616, roughness: 0.4 })); disc.rotation.z = Math.PI / 2; g.add(disc); const f1 = plane(0.82, 0.82, STD({ map: logoTex, transparent: true, emissive: 0xffffff, emissiveMap: logoTex, emissiveIntensity: 0.4 }), 0.03, 0, 0, Math.PI / 2, g); const f2 = plane(0.82, 0.82, STD({ map: logoTex, transparent: true, emissive: 0xffffff, emissiveMap: logoTex, emissiveIntensity: 0.4 }), -0.03, 0, 0, -Math.PI / 2, g); }
 // A-frame chalkboard by the door
 { const g = new THREE.Group(); g.position.set(7.1, 0, 11.0); g.rotation.y = -0.4; scene.add(g);
-  const chalk = textTex([{ text: 'OGGI', size: 70, color: '#EEA640', lh: 1.3 }, { text: 'album night', size: 52, color: '#F2EADA', weight: 500, lh: 1.25 }, { text: 'lato A → lato B', size: 40, color: '#F2EADA', mono: true, weight: 400, lh: 1.3 }, { text: 'ore 21', size: 52, color: '#F2EADA', weight: 600, lh: 1.3 }, { text: 'spina ospite', size: 40, color: '#EEA640', mono: true, weight: 400, lh: 1.3 }], 400, 640, '#1d211f');
+  const nx = eventsFrom()[0]; const dd = nx ? new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(nx.start)).toUpperCase() : 'OGGI';
+  const hh = nx ? 'ore ' + new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' }).format(new Date(nx.start)) : '';
+  const words = (nx ? nx.title : 'album night').split(' '); const l1 = words.slice(0, Math.ceil(words.length / 2)).join(' '), l2 = words.slice(Math.ceil(words.length / 2)).join(' ');
+  const chalk = textTex([{ text: dd, size: 54, color: '#EEA640', lh: 1.4 }, { text: l1, size: 48, color: '#F2EADA', weight: 600, lh: 1.2 }, { text: l2, size: 48, color: '#F2EADA', weight: 600, lh: 1.2 }, { text: hh, size: 46, color: '#F2EADA', mono: true, weight: 400, lh: 1.4 }, { text: 'spina ospite', size: 36, color: '#EEA640', mono: true, weight: 400, lh: 1.3 }], 400, 640, '#1d211f');
   for (const s of [-1, 1]) { const p = new THREE.Group(); p.position.z = s * 0.12; p.rotation.x = s * 0.16; g.add(p); box(0.62, 0.98, 0.03, mOak, 0, 0.5, 0, p); plane(0.54, 0.86, STD({ map: chalk, roughness: 0.95 }), 0, 0.52, s * 0.017, s > 0 ? 0 : Math.PI, p); } }
 // bike parked at a column
 { const g = new THREE.Group(); g.position.set(-8.5, 0, 13.4); g.rotation.y = 0.15; scene.add(g); const mt = STD({ color: 0x2f4f4f, metalness: 0.6, roughness: 0.4 });
@@ -270,7 +284,7 @@ for (const [x, z] of [[10.6, 28], [10.6, 36], [10.6, 58], [10.6, 66], [21.3, 40]
 function lampPost(x, z) {
   cyl(0.07, 0.12, 8.5, mBlackMetal, x, 4.25, z, scene, 12); obCirc(x, z, 0.2);
   for (const s of [-1, 1]) { box(0.8, 0.05, 0.05, mBlackMetal, x + s * 0.4, 8.4, z); box(0.36, 0.14, 0.36, mBlackMetal, x + s * 0.78, 8.32, z); box(0.3, 0.03, 0.3, STD({ color: 0xffffff, emissive: 0xffdcaa, emissiveIntensity: 3 }), x + s * 0.78, 8.24, z, scene, false); }
-  const l = new THREE.PointLight(0xffd2a0, 14, 18, 2); l.position.set(x, 7.9, z); scene.add(l);
+  const l = new THREE.PointLight(0xffd2a0, 14, 18, 2); l.position.set(x, 7.9, z); scene.add(l); nightLights.push(l);
 }
 for (const z of [26, 40, 54, 68]) lampPost(24.5, z);
 lampPost(4, 30); lampPost(4, 62);
@@ -483,6 +497,42 @@ const hemi = new THREE.HemisphereLight(0x9fb2e0, 0x5a4636, 0.18); scene.add(hemi
 const sun = new THREE.DirectionalLight(0xffa060, 1.6); sun.position.copy(SUN_DIR).multiplyScalar(90).add(new THREE.Vector3(6, 0, 40)); sun.target.position.set(6, 0, 40); scene.add(sun.target);
 sun.castShadow = true; sun.shadow.mapSize.set(isMobile ? 1024 : 2048, isMobile ? 1024 : 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
 Object.assign(sun.shadow.camera, { left: -55, right: 55, top: 55, bottom: -55, near: 5, far: 220 }); sun.shadow.mapSize.set(isMobile ? 2048 : 4096, isMobile ? 2048 : 4096); scene.add(sun);
+// ---------------- time of day: real sun over Taranto (40.4635 N, 17.26 E); scene x = east, -z = north
+function sunAt(date) {
+  const rad = Math.PI / 180, d = date.getTime() / 86400000 - 10957.5; // days since J2000
+  const g = (357.529 + 0.98560028 * d) * rad, q = 280.459 + 0.98564736 * d, L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad, e = (23.439 - 0.00000036 * d) * rad;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const gmst = (18.697374558 + 24.06570982441908 * d) % 24, lst = (gmst * 15 + 17.26) * rad, H = lst - ra, lat = 40.4635 * rad;
+  const el = Math.asin(Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(H));
+  const az = Math.atan2(-Math.sin(H), Math.tan(dec) * Math.cos(lat) - Math.sin(lat) * Math.cos(H)); // from north, clockwise
+  return { el: el / rad, az: az / rad };
+}
+const TOD_PRESETS = { tramonto: { el: 3.5, az: 238 }, giorno: { el: 48, az: 200 }, notte: { el: -18, az: 330 } };
+let todMode = 'tramonto', lastBakeEl = 999;
+const cDay = new THREE.Color(0xfff2e2), cLow = new THREE.Color(0xffa060), tmpC = new THREE.Color();
+function applyTime() {
+  const sp = todMode === 'reale' ? sunAt(new Date()) : TOD_PRESETS[todMode];
+  const el = sp.el, az = sp.az * Math.PI / 180, er = Math.max(el, -6) * Math.PI / 180;
+  const dir = new THREE.Vector3(Math.sin(az) * Math.cos(er), Math.sin(er), -Math.cos(az) * Math.cos(er)).normalize();
+  sky.material.uniforms.sunPosition.value.copy(dir);
+  const k = THREE.MathUtils.clamp((el + 1) / 14, 0, 1); // 0 night .. 1 day-ish
+  sun.intensity = el < -3 ? 0 : el < 0 ? 0.25 * (el + 3) / 3 : 0.4 + 1.5 * Math.min(1, el / 20);
+  sun.color.copy(tmpC.copy(cLow).lerp(cDay, THREE.MathUtils.clamp((el - 2) / 25, 0, 1)));
+  const lp = dir.y > 0.02 ? dir : new THREE.Vector3(dir.x, 0.2, dir.z).normalize();
+  sun.position.copy(lp).multiplyScalar(90).add(sun.target.position);
+  const night = THREE.MathUtils.clamp((2 - el) / 8, 0, 1); // 1 when sun well below horizon
+  hemi.intensity = 0.16 + 0.7 * k; hemi.color.setHex(night > 0.5 ? 0x5b6b9a : 0x9fb2e0);
+  renderer.toneMappingExposure = el > 20 ? 0.62 : el > 6 ? 0.72 : el > -2 ? 0.85 : 0.8;
+  const lampK = THREE.MathUtils.clamp((8 - el) / 6, 0, 1); for (const l of nightLights) l.intensity = 14 * lampK; for (const m of towerMats) m.emissiveIntensity = 1.4 * night;
+  scene.fog.color.setHex(night > 0.6 ? 0x1a1d29 : el > 15 ? 0xc9d3dc : 0xb59a8a);
+  if (Math.abs(el - lastBakeEl) > 1.5) { lastBakeEl = el; if (el < -5) { const ns = new THREE.Scene(); ns.background = new THREE.Color(0x070a14); const rt = pmrem.fromScene(ns, 0); scene.environment = rt.texture; if (envRT) envRT.dispose(); envRT = rt; } else bakeEnv(); }
+  sky.visible = el > -9; scene.background = el > -9 ? null : new THREE.Color(0x05070f);
+  return { el, night };
+}
+window.__dbg = () => ({ sun: sun.intensity, hemi: hemi.intensity, exp: renderer.toneMappingExposure, env: !!scene.environment, lamps: nightLights.length });
+window.__tod = m => { if (m) { todMode = m; lastBakeEl = 999; } return applyTime(); };
+setInterval(() => { if (todMode === 'reale') applyTime(); }, 60000);
+applyTime();
 function pl(x, y, z, I, d = 10, col = 0xffc07a) { const l = new THREE.PointLight(col, I, d, 2); l.position.set(x, y, z); scene.add(l); return l; }
 // interior warm lighting
 pl(2.4, 2.7, 8.3, 14); pl(9.2, 2.7, 7.6, 16); pl(2.5, 2.5, 4.2, 9, 8); pl(8.2, 2.7, 2.4, 13); pl(9.6, 2.6, 5.4, 8, 6, 0xfff1dd);
@@ -514,7 +564,8 @@ if (window.SP_ALBUMS && window.SP_ALBUMS.length) coverTex.forEach((t, i) => {
   im.src = 'https://i.scdn.co/image/ab67616d00001e02' + al.img;
 });
 for (const [m, i] of _lateMats) { m.map = coverTex[(i * 3 + 1) % 16]; m.needsUpdate = true; }
-const canLabels = ['#EEA640', '#2f8f83', '#d9534f', '#3355aa', '#F2EADA', '#161616', '#94a35a', '#c96a3c'].map((c, i) => canvasTex(128, 128, (g, w, h) => { g.fillStyle = c; g.fillRect(0, 0, w, h); g.fillStyle = i === 4 ? '#4A1C26' : '#F2EADA'; g.fillRect(0, h * 0.42, w, h * 0.18); g.fillStyle = c; g.font = '700 14px "IBM Plex Mono"'; g.fillText(['IPA', 'PILS', 'SOUR', 'APA', 'BLANCHE', 'STOUT', 'SAISON', 'RED'][i], 18, h * 0.55); }));
+const canBeers = BEERS.filter(b => b.where === 'frigo').slice(0, 8);
+const canLabels = canBeers.map(b => canvasTex(128, 128, (g, w, h) => { g.fillStyle = b.col; g.fillRect(0, 0, w, h); g.fillStyle = '#F2EADA'; g.fillRect(0, h * 0.36, w, h * 0.3); g.fillStyle = '#161616'; g.font = '700 15px "Bricolage Grotesque", sans-serif'; g.textAlign = 'center'; g.fillText(b.n.toUpperCase().slice(0, 12), w / 2, h * 0.5); g.font = '500 9px "IBM Plex Mono", monospace'; g.fillText(b.br.toUpperCase().slice(0, 18), w / 2, h * 0.61); g.fillStyle = '#F2EADA'; g.fillText(b.st.toUpperCase().slice(0, 18), w / 2, h * 0.86); }));
 const canMats = canLabels.map(t => STD({ map: t, metalness: 0.75, roughness: 0.28, envMapIntensity: 1.2 }));
 const canGeo = new THREE.CylinderGeometry(0.033, 0.033, 0.122, 20);
 const mCupPlastic = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.15, transparent: true, opacity: 0.28, envMapIntensity: 1.2, depthWrite: false });
@@ -557,7 +608,8 @@ box(3.4, 3.1, 0.06, STD({ color: 0x2a1c1c, roughness: 0.6 }), 9.4, 1.55, 9.86);
 box(3.0, 0.1, 0.1, mSteel, 9.4, 1.5, 9.78);
 for (let i = 0; i < 8; i++) { const x = 8.2 + i * 0.34; cyl(0.014, 0.014, 0.12, mSteel, x, 1.42, 9.72, scene, 12); cyl(0.015, 0.02, 0.2, STD({ color: [0xEEA640, 0x4A1C26, 0xF2EADA, 0x2f8f83][i % 4], roughness: 0.4 }), x, 1.66, 9.7, scene, 12); }
 box(1.6, 0.04, 0.4, mSteel, 9.4, 1.02, 9.6);
-const boardTex = textTex([{ text: 'SPINE DI OGGI', size: 64, color: '#EEA640', lh: 1.4 }, { text: '1 · PILS LOCALE ......... 5', size: 38, color: '#F2EADA', mono: true, weight: 400, lh: 1.3 }, { text: '2 · IPA SALENTINA ...... 6', size: 38, color: '#F2EADA', mono: true, weight: 400, lh: 1.3 }, { text: '3 · STOUT AL CAFFÈ ...... 6', size: 38, color: '#F2EADA', mono: true, weight: 400, lh: 1.3 }, { text: '4 · SOUR ALLE CILIEGIE .. 7', size: 38, color: '#F2EADA', mono: true, weight: 400, lh: 1.3 }], 900, 320, '#1a1a1a');
+const taps = BEERS.filter(b => b.where === 'spina').slice(0, 4);
+const boardTex = textTex([{ text: 'SPINE DI OGGI', size: 60, color: '#EEA640', lh: 1.35 }, ...taps.map((b, k) => { const left = `${k + 1} · ${b.n.toUpperCase()} ${abvTxt(b)}`, right = eur(b.price); return { text: left + ' ' + '.'.repeat(Math.max(2, 30 - left.length - right.length)) + ' ' + right, size: 34, color: '#F2EADA', mono: true, weight: 400, lh: 1.3 }; })], 900, 320, '#1a1a1a');
 plane(2.3, 0.82, STD({ map: boardTex, roughness: 0.9 }), 9.4, 2.35, 9.82, Math.PI);
 // can shelves on side wall x=10.9
 { const n = 3 * 20; const ims = canMats.map(m => new THREE.InstancedMesh(canGeo, m, n)); const cnt = ims.map(() => 0); const o = new THREE.Object3D();
@@ -652,7 +704,8 @@ box(0.6, 0.38, 0.34, mOak, 3.0, 0.19, 4.55);
   const gl = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.038, 0.03, 0.15, 14, 1, true), new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, transparent: true, opacity: 0.25, side: THREE.DoubleSide }), 26), o = new THREE.Object3D();
   for (let i = 0; i < 26; i++) { o.position.set(8.1 + i * 0.105, 2.01, 9.72); o.updateMatrix(); gl.setMatrixAt(i, o.matrix); } scene.add(gl); }
 // gig posters on the left wall above the cover wall
-const posterTex = ['TAPE TALES · LIVE', 'DJ SET VINILE', 'FIERA DELLE FANZINE', 'TAP TAKEOVER'].map((t, i) => textTex([{ text: ['SAB', 'VEN', 'DOM', 'GIO'][i], size: 60, color: ['#EEA640', '#F2EADA', '#161616', '#F2EADA'][i], lh: 1.4 }, { text: t, size: 40, color: ['#F2EADA', '#EEA640', '#4A1C26', '#EEA640'][i], lh: 1.3 }, { text: 'SOTTOPORTICO', size: 28, color: ['#F2EADA', '#F2EADA', '#161616', '#F2EADA'][i], mono: true, weight: 500, lh: 2 }], 360, 500, ['#4A1C26', '#161616', '#EEA640', '#2f5d62'][i]));
+const posterEv = eventsFrom().slice(0, 4); while (posterEv.length < 4) posterEv.push({ title: 'SOTTOPORTICO', start: Date.now() });
+const posterTex = posterEv.map((e, i) => textTex([{ text: new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short', day: 'numeric' }).format(new Date(e.start)).toUpperCase(), size: 54, color: ['#EEA640', '#F2EADA', '#161616', '#F2EADA'][i], lh: 1.4 }, { text: e.title.toUpperCase().slice(0, 16), size: 38, color: ['#F2EADA', '#EEA640', '#4A1C26', '#EEA640'][i], lh: 1.3 }, { text: 'SOTTOPORTICO', size: 28, color: ['#F2EADA', '#F2EADA', '#161616', '#F2EADA'][i], mono: true, weight: 500, lh: 2 }], 360, 500, ['#4A1C26', '#161616', '#EEA640', '#2f5d62'][i]));
 posterTex.forEach((t, i) => { box(0.03, 0.74, 0.54, mBlackMetal, 0.02, 2.55, 6.95 + i * 0.68, scene, false); plane(0.5, 0.7, STD({ map: t }), 0.04, 2.55, 6.95 + i * 0.68, Math.PI / 2); });
 // headphones on hooks at the listening stations
 for (let k = 0; k < 2; k++) { const h = makeHeadphones_late(); h.position.set(0.05, 1.45, 7.6 + k * 1.3 + 0.25); h.rotation.set(0, Math.PI / 2, 0); }
@@ -748,6 +801,7 @@ async function loadAvatar(n) {
   _avBuf[n] ||= b64buf(A + 'pp/' + n + '.b64.json');
   if (!_avTex[n]) _avImg[n] ||= new Promise((res, rej) => new THREE.ImageLoader(manager).load(A + 'pp/' + n + '.jpg', res, undefined, rej));
   const fbx = fbxL.parse((await _avBuf[n]).slice(0), '');
+  { const ls = []; fbx.traverse(o => { if (o.isLight) ls.push(o); }); for (const l of ls) l.parent.remove(l); } // FBX files carry their own lights: drop them
   // split the atlas once per character into 4 quadrant textures (shared by every instance); smaller on phones
   if (!_avTex[n]) {
     const atlasImg = await _avImg[n];
@@ -777,6 +831,20 @@ function attachProp(fbx, side, kind) {
   if (kind === 'record') { p = makeRecord(); p.scale.setScalar(100); p.position.set(9, bone === L ? -2 : 2, 0); p.rotation.set(0, 0, 0.3); }
   if (kind === 'book') { p = makeBook(); p.scale.setScalar(100); p.position.set(8, bone === L ? -4 : 4, 0); p.rotation.set(Math.PI / 2, 0, 0); }
   p.traverse(m => { if (m.isMesh) m.castShadow = true; }); bone.add(p); return p;
+}
+const ACC_COLORS = { amber: 0xEEA640, bordeaux: 0x6b1f2c, verde: 0x2f5d3c, nero: 0x1b1b1d, crema: 0xe9e1cf };
+function attachAccessory(fbx, kind, color) {
+  const col = ACC_COLORS[color] ?? ACC_COLORS.amber, M = STD({ color: col, roughness: 0.8 });
+  const H = fbx.getObjectByName('Bip01_Head'), N = fbx.getObjectByName('Bip01_Neck') || H; if (!H) return null;
+  const g = new THREE.Group(); g.scale.setScalar(100); g.rotation.set(0, 0, -Math.PI / 2);
+  if (kind === 'cap') { const c = new THREE.Mesh(new THREE.SphereGeometry(0.112, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), M); c.position.set(0, 0.162, -0.008); c.scale.set(1.1, 0.85, 1.16); g.add(c); const v = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.008, 20, 1, false, -Math.PI / 2, Math.PI), M); v.position.set(0, 0.165, 0.112); v.scale.set(1, 1, 0.9); v.rotation.x = 0.12; g.add(v); H.add(g); }
+  else if (kind === 'beanie') { const c = new THREE.Mesh(new THREE.SphereGeometry(0.112, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), M); c.position.y = 0.175; c.scale.set(1, 1.05, 1.08); g.add(c); const r = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.018, 8, 24), M); r.rotation.x = Math.PI / 2; r.position.y = 0.17; r.scale.set(1.04, 1.1, 1); g.add(r); H.add(g); }
+  else if (kind === 'glasses') { const mG = STD({ color: 0x0b0b0c, roughness: 0.15, metalness: 0.4 }); for (const sx of [-0.035, 0.035]) { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.006, 20), mG); l.rotation.x = Math.PI / 2; l.position.set(sx, 0.085, 0.098); g.add(l); } const b = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.006, 0.006), mG); b.position.set(0, 0.095, 0.098); g.add(b); for (const sx of [-0.066, 0.066]) { const t = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.005, 0.1), mG); t.position.set(sx, 0.092, 0.05); g.add(t); } H.add(g); }
+  else if (kind === 'scarf') { const r = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.03, 10, 24), M); r.rotation.x = Math.PI / 2; r.position.y = 0.0; g.add(r); const t = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.02), M); t.position.set(0.03, -0.09, 0.08); g.add(t); N.add(g); }
+  else if (kind === 'headphones') { const hp = attachHeadphones(fbx); return hp; }
+  else if (kind === 'bag') return attachProp(fbx, 'L', 'bag');
+  else return null;
+  return g;
 }
 function attachHeadphones(fbx) { const H = fbx.getObjectByName('Bip01_Head'); if (!H) return null; const hp = makeHeadphones(); hp.scale.setScalar(100); hp.position.set(8, 0, 0); hp.rotation.set(0, 0, -Math.PI / 2); H.add(hp); return hp; }
 async function person(o) {
@@ -895,8 +963,12 @@ addEventListener('resize', resize); resize();
     let done = 0;
     const crowd = isMobile ? people.filter((p, i) => i % 2 === 0 || p.anim.includes('work')) : people;
     const tick = () => { done++; lmsg.textContent = `Arrivano le persone… ${done}/${crowd.length}`; };
-    if (isMobile) { for (const p of crowd) { await person(p); tick(); } } // one at a time on phones: lower memory peak
-    else await Promise.all(crowd.map(p => person(p).then(tick)));
+    // staff + a first group now, the rest arrive while you play (faster entry, lower memory peak)
+    const first = crowd.filter((p, i) => p.anim.includes('work') || i < (isMobile ? 6 : 12)), later = crowd.filter(p => !first.includes(p));
+    lmsg.textContent = `Arrivano le persone… 0/${first.length}`; done = 0;
+    const tick1 = () => { done++; lmsg.textContent = `Arrivano le persone… ${done}/${first.length}`; };
+    if (isMobile) { for (const p of first) { await person(p); tick1(); } } else await Promise.all(first.map(p => person(p).then(tick1)));
+    window.__crowdDone = (async () => { await new Promise(r => setTimeout(r, 1500)); for (const p of later) { try { await person(p); } catch (e) { } await new Promise(r => setTimeout(r, isMobile ? 250 : 60)); } })();
     lmsg.textContent = 'Quasi pronto…';
     await new Promise(r => { if (manager.itemsLoaded >= manager.itemsTotal) r(); else { const prev = manager.onLoad; manager.onLoad = () => { prev && prev(); r(); }; setTimeout(r, 15000); } });
     lmsg.textContent = 'Preparo la scena…';
@@ -937,10 +1009,11 @@ function showModes() {
   document.getElementById('mTour').onclick = () => { ov.hidden = true; document.getElementById('panel').hidden = false; go(0); };
   document.getElementById('mLive').onclick = async () => {
     ov.hidden = true; const m = await import('./live.js');
-    m.start({ THREE, A, scene, camera, controls, renderer, canvas, frameHooks, mixers, clip, loadAvatar, attachProp, attachHeadphones, textTex, canvasTex, coverTex, walkables, seats, npcs, spinning, isMobile, obstacles, LIB: { x: LIB.x, z: LIB.z, r: LR } });
+    m.start({ THREE, A, scene, camera, controls, renderer, canvas, frameHooks, mixers, clip, loadAvatar, attachProp, attachHeadphones, attachAccessory, canMatFor: id => { const i = canBeers.findIndex(b => b.id === id); return canMats[i >= 0 ? i : 0]; }, textTex, canvasTex, coverTex, walkables, seats, npcs, spinning, isMobile, obstacles, LIB: { x: LIB.x, z: LIB.z, r: LR } });
   };
 }
 window.__mode = (k) => document.getElementById(k === 'live' ? 'mLive' : 'mTour').click();
 window.__cam = (p, l) => { camera.position.set(...p); controls.target.set(...l); controls.update(); };
+window.__scene = scene; window.__renderer = renderer;
 window.__render = () => { anim = null; for (const m of mixers) m.update(0.016); for (const h of frameHooks) h(0.016); controls.update(); composer.render(); };
 window.__step = (n, dt = 0.05) => { for (let i = 0; i < n; i++) { for (const m of mixers) m.update(dt); for (const h of frameHooks) h(dt); } controls.update(); composer.render(); };

@@ -35,6 +35,7 @@
     ch.on('broadcast', { event: 'st' }, ({ payload }) => { if (!payload || typeof payload.k !== 'string' || payload.k === me || typeof payload.p !== 'object') return; states.set(payload.k, { p: payload.p, at: Date.now() }); soon(); });
     ch.on('broadcast', { event: 'bye' }, ({ payload }) => { if (payload && payload.k) { states.delete(payload.k); soon(); } });
     ch.on('broadcast', { event: 'hello' }, () => { lastSent = 0; schedule(); });
+    const voiceFns = []; ch.on('broadcast', { event: 'vx' }, ({ payload }) => { if (!payload || typeof payload.k !== 'string' || payload.k === me) return; for (const f of voiceFns) { try { f(payload.k, payload.v); } catch (e) { } } });
     const flush = () => { timer = null; if (!connected) return; lastSent = Date.now(); ch.send({ type: 'broadcast', event: 'st', payload: { k: me, p: myP } }).catch(() => { }); };
     const schedule = () => { if (timer) return; timer = setTimeout(flush, Math.max(0, SEND_EVERY_MS - (Date.now() - lastSent))); };
     setInterval(() => { if (connected && Date.now() - lastSent > 2500) flush(); soon(); }, 2500); // heartbeat + cleanup
@@ -60,6 +61,7 @@
       connected: () => connected,
       onConnection: (fn) => { connSubs.push(fn); setTimeout(() => fn(connected), 0); return () => { }; },
       emit: async () => { }, on: () => () => { },
+      voice: { send: (v) => ch.send({ type: 'broadcast', event: 'vx', payload: { k: me, v } }).catch(() => { }), on: (fn) => { voiceFns.push(fn); } },
     };
   }
   window.SP_STANDALONE = true;

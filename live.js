@@ -1,6 +1,7 @@
 // Sottoportico LIVE — shared presence, avatars, beers, seats, DJ console with synced synth music, chat.
 // Everything other viewers send arrives as presence (untrusted display data): never HTML, never authority.
 
+import { BEERS, eventsFrom, liveEvent, whenTxt, untilTxt, gcalURL, eur, abvTxt } from './data.js';
 const AVATARS = [];
 for (const g of ['Female', 'Male']) for (let i = 1; i <= 16; i++) { if (g === 'Female' && i === 16) continue; AVATARS.push(`${g}_Adult_${String(i).padStart(2, '0')}`); }
 const clean = (s, n) => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁯﻿]/g, '').trim().slice(0, n);
@@ -111,7 +112,7 @@ class Music {
 
 // ------------------------------------------------------------------ main
 export async function start(ctx) {
-  const { THREE, scene, camera, controls, canvas, frameHooks, clip, loadAvatar, attachProp, attachHeadphones, canvasTex, coverTex, walkables, seats, npcs } = ctx;
+  const { THREE, scene, camera, controls, canvas, frameHooks, clip, loadAvatar, attachProp, attachHeadphones, attachAccessory, canMatFor, canvasTex, coverTex, walkables, seats, npcs } = ctx;
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
   injectCSS();
   const music = new Music();
@@ -126,30 +127,47 @@ export async function start(ctx) {
 
   // ---------------- join screen
   const join = el('div', 'lv-join');
-  join.innerHTML = `<div class="lv-jbox"><h2>Entra al Sottoportico</h2><label for="lv-nick">Il tuo nome</label><input id="lv-nick" maxlength="20" autocomplete="nickname" placeholder="Come ti chiamano?"><div class="lv-lbl">Scegli il tuo personaggio</div><div class="lv-grid" role="radiogroup" aria-label="Personaggi"></div><button class="primary lv-go">Entra nel locale</button><p class="lv-note">${window.SP_STANDALONE ? 'Per giocare insieme manda questo link ai tuoi amici: chi apre la pagina ed entra nel locale vi vede in tempo reale.' : 'Per giocare insieme, condividi questa pagina con i tuoi amici scegliendo le persone dal pulsante di condivisione: entrano con il loro account Claude e vi vedete in tempo reale. Chi la apre da un link pubblico può girare, ma da solo.'}</p></div>`;
+  join.innerHTML = `<div class="lv-jbox"><h2>Entra al Sottoportico</h2><label for="lv-nick">Il tuo nome</label><input id="lv-nick" maxlength="20" autocomplete="nickname" placeholder="Come ti chiamano?"><div class="lv-lbl">Scegli il tuo personaggio</div><div class="lv-grid" role="radiogroup" aria-label="Personaggi"></div><div class="lv-lbl">Un accessorio</div><div class="lv-accs" id="lv-accs"></div><div class="lv-cols" id="lv-cols"></div><button class="primary lv-go">Entra nel locale</button><p class="lv-note">${window.SP_STANDALONE ? 'Per giocare insieme manda questo link ai tuoi amici: chi apre la pagina ed entra nel locale vi vede in tempo reale.' : 'Per giocare insieme, condividi questa pagina con i tuoi amici scegliendo le persone dal pulsante di condivisione: entrano con il loro account Claude e vi vedete in tempo reale. Chi la apre da un link pubblico può girare, ma da solo.'}</p></div>`;
   document.body.appendChild(join);
   const grid = join.querySelector('.lv-grid'); let chosen = AVATARS[Math.floor(Math.random() * AVATARS.length)];
   AVATARS.forEach((n, k) => { const b = document.createElement('button'); b.className = 'lv-av'; b.setAttribute('role', 'radio'); b.setAttribute('aria-label', 'Personaggio ' + (k + 1)); b.style.backgroundPosition = `${-(k % 8) * 64}px ${-Math.floor(k / 8) * 64}px`; b.onclick = () => { chosen = n; [...grid.children].forEach(x => x.setAttribute('aria-checked', 'false')); b.setAttribute('aria-checked', 'true'); }; b.setAttribute('aria-checked', n === chosen ? 'true' : 'false'); grid.appendChild(b); });
+  const ACCS = [['', 'Niente'], ['cap', 'Cappellino'], ['beanie', 'Berretto'], ['glasses', 'Occhiali da sole'], ['scarf', 'Sciarpa'], ['headphones', 'Cuffie'], ['bag', 'Busta dei dischi']];
+  const COLS = [['amber', '#EEA640'], ['bordeaux', '#6b1f2c'], ['verde', '#2f5d3c'], ['nero', '#1b1b1d'], ['crema', '#e9e1cf']];
+  let acc = { k: '', c: 'amber' };
+  try { const a = JSON.parse(localStorage.getItem('sp_acc') || 'null'); if (a && ACCS.some(x => x[0] === a.k) && COLS.some(x => x[0] === a.c)) acc = a; } catch (e) { }
+  const accsEl = join.querySelector('#lv-accs'), colsEl = join.querySelector('#lv-cols');
+  const renderAcc = () => {
+    accsEl.replaceChildren(...ACCS.map(([k, l]) => { const b = document.createElement('button'); b.className = 'lv-chip'; b.textContent = l; b.setAttribute('aria-pressed', String(acc.k === k)); b.onclick = () => { acc.k = k; renderAcc(); }; return b; }));
+    colsEl.hidden = !['cap', 'beanie', 'scarf'].includes(acc.k);
+    colsEl.replaceChildren(...COLS.map(([c, hex]) => { const b = document.createElement('button'); b.className = 'lv-col'; b.style.background = hex; b.setAttribute('aria-label', 'Colore ' + c); b.setAttribute('aria-pressed', String(acc.c === c)); b.onclick = () => { acc.c = c; renderAcc(); }; return b; }));
+  }; renderAcc();
   const nickIn = join.querySelector('#lv-nick');
   try { nickIn.value = localStorage.getItem('sp_nick') || ''; const a = localStorage.getItem('sp_av'); if (a && AVATARS.includes(a)) { chosen = a; [...grid.children].forEach((x, i) => x.setAttribute('aria-checked', AVATARS[i] === a ? 'true' : 'false')); } } catch (e) { }
   userP.then(async u => { if (!u || nickIn.value) return; try { const id = await u.id?.(); if (!id) return; const ps = await u.profiles([id]); const nm = ps?.[id]?.name; if (nm && !nickIn.value) nickIn.value = clean(nm.split(' ')[0], 20); } catch (e) { } });
   await new Promise(res => { join.querySelector('.lv-go').onclick = res; nickIn.onkeydown = e => { if (e.key === 'Enter') res(); }; });
   const nick = clean(nickIn.value, 20) || 'Ospite';
-  try { localStorage.setItem('sp_nick', nick); localStorage.setItem('sp_av', chosen); } catch (e) { }
+  try { localStorage.setItem('sp_nick', nick); localStorage.setItem('sp_av', chosen); localStorage.setItem('sp_acc', JSON.stringify(acc)); } catch (e) { }
   music.init(); music.resume();
   join.remove();
 
   // ---------------- HUD
   const hud = el('div', 'lv-hud'); document.body.appendChild(hud);
   hud.innerHTML = `
-    <div class="lv-top"><button class="lv-pill" id="lv-people" aria-expanded="false"><span class="lv-dot"></span><span id="lv-count">LIVE</span></button><button class="lv-pill" id="lv-audio" aria-pressed="false">Audio sì</button><button class="lv-pill" id="lv-exit">Esci</button></div>
+    <div class="lv-top"><button class="lv-pill" id="lv-people" aria-expanded="false"><span class="lv-dot"></span><span id="lv-count">LIVE</span></button><button class="lv-pill" id="lv-evb" aria-expanded="false">Serate</button><button class="lv-pill" id="lv-tod" title="Ora del giorno">Ora reale</button><button class="lv-pill" id="lv-audio" aria-pressed="false">Audio sì</button><button class="lv-pill" id="lv-exit">Esci</button></div>
     <div class="lv-plist" id="lv-plist" hidden></div>
     <div class="lv-now" id="lv-now" hidden></div>
+    <div class="lv-next" id="lv-next" hidden></div>
+    <div class="lv-sheet" id="lv-menu" hidden></div>
+    <div class="lv-sheet" id="lv-evp" hidden></div>
+    <div class="lv-sheet lv-ixs" id="lv-ix" hidden></div>
+    <div class="lv-ask" id="lv-ask" hidden></div>
+    <div class="lv-joy" id="lv-joy" hidden><i></i></div>
     <div class="lv-toast" id="lv-toast" role="status" aria-live="polite"></div>
     <div class="lv-bottom">
       <div class="lv-log" id="lv-log" aria-live="polite"></div>
       <div class="lv-actions" id="lv-actions"></div>
-      <form class="lv-chat" id="lv-chat"><label class="sr" for="lv-msg">Messaggio</label><input id="lv-msg" maxlength="140" placeholder="Scrivi a chi è nel locale…" autocomplete="off"><button class="primary" type="submit">Invia</button></form>
+      <div class="lv-react" id="lv-react" hidden></div>
+      <form class="lv-chat" id="lv-chat"><label class="sr" for="lv-msg">Messaggio</label><input id="lv-msg" maxlength="140" placeholder="Scrivi a chi è nel locale…" autocomplete="off"><button type="button" id="lv-emo" aria-label="Reazioni" aria-expanded="false">😊</button><button type="button" id="lv-mic" hidden aria-label="Tieni premuto per parlare">🎙</button><button class="primary" type="submit">Invia</button></form>
     </div>
     <div class="lv-dj" id="lv-dj" hidden>
       <div class="lv-djh"><strong>Console DJ</strong><button id="lv-djx">Scendi</button></div>
@@ -267,15 +285,19 @@ export async function start(ctx) {
       }
     });
   }
+  const emojiCache = {};
+  function emojiTex(e) { return emojiCache[e] ||= canvasTex(128, 128, (g, w, h) => { g.font = '96px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(e, w / 2, h / 2 + 6); }); }
   function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
   class Avatar {
-    constructor(av, nick, isMe) { this.av = av; this.nick = nick; this.isMe = isMe; this.g = new THREE.Group(); scene.add(this.g); this.key = ''; this.actions = {}; this.hold = ''; this.ready = false; this.bubbleT = 0; }
+    constructor(av, nick, isMe, acc) { this.av = av; this.nick = nick; this.isMe = isMe; this.acc = acc || { k: '', c: 'amber' }; this.fx = []; this.g = new THREE.Group(); scene.add(this.g); this.key = ''; this.actions = {}; this.hold = ''; this.ready = false; this.bubbleT = 0; }
     async load() {
       this.fbx = await loadAvatar(this.av); this.fbx.scale.setScalar(0.01); this.g.add(this.fbx);
       this.mixer = new THREE.AnimationMixer(this.fbx);
       this.props = { can: attachProp(this.fbx, 'R', 'can'), cup: attachProp(this.fbx, 'R', 'cup') }; this.props.can.visible = this.props.cup.visible = false;
       this.hp = attachHeadphones(this.fbx); this.hp.visible = false;
       this.rec = attachProp(this.fbx, 'L', 'record'); this.rec.visible = false; this.recT = 0;
+      try { if (this.acc.k && attachAccessory) this.accObj = attachAccessory(this.fbx, this.acc.k, this.acc.c); } catch (e) { }
+      this.hit = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.9, 8), new THREE.MeshBasicMaterial({ visible: false })); this.hit.position.y = 0.95; this.g.add(this.hit);
       this.tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tagTex(this.nick), depthTest: false, transparent: true })); this.tag.scale.set(1.5, 0.28, 1); this.tag.position.y = 2.05; this.tag.renderOrder = 10; this.g.add(this.tag);
       this.ready = true; await this.play('idle');
     }
@@ -288,17 +310,20 @@ export async function start(ctx) {
       this.hp.visible = key === 'dj';
     }
     flashRecord() { if (this.rec) { this.rec.visible = true; this.recT = 1.5; } }
-    setHold(h) { if (!this.ready || this.hold === h) return; this.hold = h; this.props.can.visible = h === 'can'; this.props.cup.visible = h === 'cup'; }
+    setHold(h, bv) { if (!this.ready) return; if (h === 'can' && bv && bv !== this.bv && canMatFor) { this.bv = bv; const m = this.props.can.children[0]; if (m) m.material = canMatFor(bv); } if (this.hold === h) return; this.hold = h; this.props.can.visible = h === 'can'; this.props.cup.visible = h === 'cup'; }
+    react(e) { if (!this.ready) return; const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTex(e), depthTest: false, transparent: true })); sp.scale.set(0.55, 0.55, 1); sp.position.set((Math.random() - 0.5) * 0.3, 2.35, 0); sp.renderOrder = 12; this.g.add(sp); this.fx.push({ sp, t: 0 }); }
+    speaking(on) { if (!this.ready) return; if (on && !this.mic) { this.mic = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTex('🔊'), depthTest: false, transparent: true })); this.mic.scale.set(0.4, 0.4, 1); this.mic.position.set(0.55, 2.05, 0); this.mic.renderOrder = 12; this.g.add(this.mic); } if (!on && this.mic) { this.g.remove(this.mic); this.mic = null; } }
     say(text) { if (!this.ready) return; if (this.bubble) { this.g.remove(this.bubble); this.bubble.material.map.dispose(); this.bubble.material.dispose(); } this.bubble = new THREE.Sprite(new THREE.SpriteMaterial({ map: tagTex(text, true), depthTest: false, transparent: true })); this.bubble.scale.set(2.1, 0.66, 1); this.bubble.position.y = 2.55; this.bubble.renderOrder = 11; this.g.add(this.bubble); this.bubbleT = 7; }
     update(dt) { if (!this.ready) return; if (this.recT > 0) { this.recT -= dt; if (this.recT <= 0) this.rec.visible = false; }
       if (this.actions[this.key]?.isRunning()) for (const k in this.actions) { const a = this.actions[k], tgt = k === this.key ? 1 : 0; let w = a.getEffectiveWeight(); w += (tgt - w) * Math.min(1, dt * 7); if (tgt === 0 && w < 0.02) { if (a.isRunning()) a.stop(); continue; } a.setEffectiveWeight(w); }
+      for (const f of this.fx) { f.t += dt; f.sp.position.y = 2.35 + f.t * 0.45; f.sp.material.opacity = Math.max(0, 1 - Math.max(0, f.t - 1.6) / 0.9); } this.fx = this.fx.filter(f => { if (f.t > 2.5) { this.g.remove(f.sp); f.sp.material.map.dispose(); f.sp.material.dispose(); return false; } return true; });
       this.mixer.update(dt); if (this.bubbleT > 0) { this.bubbleT -= dt; if (this.bubbleT <= 0 && this.bubble) { this.g.remove(this.bubble); this.bubble = null; } } }
     dispose() { scene.remove(this.g); this.g.traverse(o => { if (o.isMesh || o.isSprite) { o.geometry?.dispose?.(); } }); }
   }
 
   // ---------------- local player
-  const me = { pos: V(6.2 + (Math.random() - 0.5) * 2, 0, 17.5 + Math.random() * 2), yaw: Math.PI, path: [], st: 'idle', seat: -1, hold: '', say: null, dj: null, pad: null, drinkT: 0, talkT: 0, pending: null };
-  const meAv = new Avatar(chosen, nick, true); await meAv.load();
+  const me = { pos: V(6.2 + (Math.random() - 0.5) * 2, 0, 17.5 + Math.random() * 2), yaw: Math.PI, path: [], st: 'idle', seat: -1, hold: '', bv: '', say: null, dj: null, pad: null, re: null, ix: null, drinkT: 0, talkT: 0, pending: null };
+  const meAv = new Avatar(chosen, nick, true, acc); await meAv.load();
   meAv.g.position.copy(me.pos); meAv.g.rotation.y = me.yaw;
 
   // camera: third person
@@ -313,8 +338,8 @@ export async function start(ctx) {
   // hotspots
   const consoleSpot = { x: 2.6, z: 3.5, ry: Math.PI };
   const hot = [
-    { id: 'fridge', x: 9.3, z: 5.35, r: 1.4, label: 'Frigo · lattine', act: 'Prendi una lattina' },
-    { id: 'tap', x: 9.6, z: 6.95, r: 1.3, label: 'Spina', act: 'Birra alla spina' },
+    { id: 'fridge', x: 9.3, z: 5.35, r: 1.4, label: 'Frigo · lattine', act: 'Scegli una lattina' },
+    { id: 'tap', x: 9.6, z: 6.95, r: 1.3, label: 'Spina', act: 'Menu della spina' },
     { id: 'console', x: consoleSpot.x, z: consoleSpot.z, r: 1.3, label: 'Console DJ', act: 'Vai in console' },
   ];
   seats.forEach((s, i) => { const side = s.kind === 'table'; const ax = side ? Math.sin(s.ry + Math.PI / 2) * 0.55 : Math.sin(s.ry) * 0.62, az = side ? Math.cos(s.ry + Math.PI / 2) * 0.55 : Math.cos(s.ry) * 0.62; hot.push({ id: 'seat' + i, seat: i, x: s.x + ax, z: s.z + az, r: 1.0, act: 'Siediti' }); });
@@ -328,18 +353,21 @@ export async function start(ctx) {
   const region = v => (v.x > 0 && v.x < 11 && v.z > 0 && v.z < 10) ? 'in' : (v.x > 11 && v.z < 10.3) ? 'cor' : 'out';
   // occupancy grid (0.2 m) built from the scene's obstacles, inflated by the body radius
   const NAV = { x0: -18, z0: -2.5, res: 0.2, w: 250, h: 460 };
-  const navGrid = new Uint8Array(NAV.w * NAV.h);
+  let navGrid = new Uint8Array(NAV.w * NAV.h);
+  function buildNav() { navGrid = new Uint8Array(NAV.w * NAV.h);
   const walkArea = (x, z) => (x > 0.05 && x < 10.95 && z > 0.05 && z < 9.95) || (x > -9.1 && x < 15 && z >= 9.9 && z < 15.05) || (x > 10.9 && x < 14.75 && z > -2 && z < 15) || (x > -16.9 && x < 30.9 && z >= 14.8 && z < 88.5);
   const R = 0.28;
   for (let j = 0; j < NAV.h; j++) for (let i = 0; i < NAV.w; i++) { const x = NAV.x0 + (i + 0.5) * NAV.res, z = NAV.z0 + (j + 0.5) * NAV.res; if (!walkArea(x, z)) navGrid[j * NAV.w + i] = 1; }
-  const obs = (ctx.obstacles || []).filter(o => !(o.t === 'c' && Math.abs(o.x - 2.6) < 0.05 && Math.abs(o.z - 3.45) < 0.05)); // the hidden NPC at the console
-  for (const o of obs) {
+  const obsAll = () => (ctx.obstacles || []).filter(o => !(o.t === 'c' && Math.abs(o.x - 2.6) < 0.05 && Math.abs(o.z - 3.45) < 0.05)); // the hidden NPC at the console
+  for (const o of obsAll()) {
     const x0 = (o.t === 'b' ? o.x0 : o.x - o.r) - R, x1 = (o.t === 'b' ? o.x1 : o.x + o.r) + R, z0 = (o.t === 'b' ? o.z0 : o.z - o.r) - R, z1 = (o.t === 'b' ? o.z1 : o.z + o.r) + R;
     const i0 = Math.max(0, Math.floor((x0 - NAV.x0) / NAV.res)), i1 = Math.min(NAV.w - 1, Math.floor((x1 - NAV.x0) / NAV.res)), j0 = Math.max(0, Math.floor((z0 - NAV.z0) / NAV.res)), j1 = Math.min(NAV.h - 1, Math.floor((z1 - NAV.z0) / NAV.res));
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const x = NAV.x0 + (i + 0.5) * NAV.res, z = NAV.z0 + (j + 0.5) * NAV.res; let hit;
       if (o.t === 'b') { const dx = Math.max(o.x0 - x, 0, x - o.x1), dz = Math.max(o.z0 - z, 0, z - o.z1); hit = dx * dx + dz * dz <= R * R; } else hit = Math.hypot(x - o.x, z - o.z) <= o.r + R;
       if (hit) navGrid[j * NAV.w + i] = 1; }
   }
+  }
+  buildNav(); if (window.__crowdDone) window.__crowdDone.then(() => buildNav());
   const cellOf = v => [Math.floor((v.x - NAV.x0) / NAV.res), Math.floor((v.z - NAV.z0) / NAV.res)];
   const free = (i, j) => i >= 0 && j >= 0 && i < NAV.w && j < NAV.h && !navGrid[j * NAV.w + i];
   const center = (i, j) => V(NAV.x0 + (i + 0.5) * NAV.res, 0, NAV.z0 + (j + 0.5) * NAV.res);
@@ -378,8 +406,8 @@ export async function start(ctx) {
   }
   function occupied(i) { for (const r of remotes.values()) if (r.p?.st === 'sit' && r.p?.seat === i) return true; return false; }
   function doHot(h) {
-    if (h.id === 'fridge') { me.hold = 'can'; toast('Hai preso una lattina dal frigo'); }
-    else if (h.id === 'tap') { me.hold = 'cup'; toast('Birra alla spina, nel bicchiere'); }
+    if (h.id === 'fridge') { openMenu('frigo'); return; }
+    else if (h.id === 'tap') { openMenu('spina'); return; }
     else if (h.id === 'console') { if ([...remotes.values()].some(r => r.p?.st === 'dj')) { toast('In console c\'è già qualcuno: aspetta il tuo turno'); return; } me.st = 'dj'; me.path = []; me.pos.set(consoleSpot.x, 0, consoleSpot.z); me.yaw = consoleSpot.ry; $('lv-dj').hidden = false; renderDecks(); toast('Sei in console: scegli un disco per il piatto 1'); }
     else if (h.seat !== undefined) { if (occupied(h.seat)) { toast('Questo posto è occupato'); return; } const s = seats[h.seat]; me.st = 'sit'; me.seat = h.seat; me.path = []; me.pos.set(s.x, 0, s.z); me.yaw = s.ry; }
     pub(true);
@@ -391,6 +419,8 @@ export async function start(ctx) {
     if (!down) return; const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y), dt = performance.now() - down.t; down = null;
     if (moved > 8 || dt > 450) return;
     const r = canvas.getBoundingClientRect(); ndc.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera);
+    const ph = ray.intersectObjects([...remotes.values()].filter(r => r.av.hit).map(r => r.av.hit), false)[0];
+    if (ph) { const ent = [...remotes.entries()].find(([, r]) => r.av.hit === ph.object); if (ent) { openIx(ent[0]); return; } }
     const mh = ray.intersectObjects(markers, false)[0];
     if (mh && mh.object.userData.hot) { const h = mh.object.userData.hot; walkTo(V(h.x, 0, h.z), h); return; }
     const hit = ray.intersectObjects(walkables, false)[0]; if (!hit) return;
@@ -429,29 +459,34 @@ export async function start(ctx) {
   let lastPub = 0, dirty = true;
   function presenceObj() {
     let st = me.st; if (me.drinkT > 0 && (st === 'idle' || st === 'sit')) st = st === 'sit' ? 'sit' : 'drink';
-    return { v: 1, n: nick, av: chosen, p: [+me.pos.x.toFixed(2), +me.pos.z.toFixed(2)], r: +me.yaw.toFixed(2), st, seat: me.seat, h: me.hold, dr: me.drinkT > 0 ? 1 : 0, tk: me.talkT > 0 ? 1 : 0, say: me.say, dj: me.dj, pad: me.pad };
+    return { v: 1, n: nick, av: chosen, p: [+me.pos.x.toFixed(2), +me.pos.z.toFixed(2)], r: +me.yaw.toFixed(2), st, seat: me.seat, h: me.hold, bv: me.bv, dr: me.drinkT > 0 ? 1 : 0, tk: me.talkT > 0 ? 1 : 0, say: me.say, dj: me.dj, pad: me.pad, ac: acc.k ? acc : undefined, re: me.re, ix: me.ix };
   }
   function pub(force) { dirty = true; if (force) lastPub = 0; }
   function flush() { if (!room || !dirty) return; const now = performance.now(); if (now - lastPub < 120) return; lastPub = now; dirty = false; room.presence(presenceObj()).catch(() => { }); }
 
   // ---------------- remote players
   const remotes = new Map(); // peer -> {av:Avatar, p, pos, yaw, lastSay, lastPad}
+  let myKey = '';
   async function syncPeers(list) {
     const seen = new Set();
     for (const peer of list) {
-      if (peer.isMe || peer.kind !== 'viewer') continue;
+      if (peer.isMe) { myKey = peer.peer; continue; }
+      if (peer.kind !== 'viewer') continue;
       const p = peer.presence || {}; if (p.v !== 1 || !AVATARS.includes(p.av) || !Array.isArray(p.p)) continue;
       seen.add(peer.peer);
       let r = remotes.get(peer.peer);
       const pn = clean(p.n, 20) || 'Ospite';
-      if (!r || r.avName !== p.av || r.nick !== pn) {
+      const pac = (p.ac && ACCS.some(x => x[0] === p.ac.k) && COLS.some(x => x[0] === p.ac.c)) ? { k: p.ac.k, c: p.ac.c } : { k: '', c: 'amber' };
+      if (!r || r.avName !== p.av || r.nick !== pn || r.accSig !== pac.k + pac.c) {
         if (r) r.av.dispose();
-        r = { avName: p.av, nick: pn, av: new Avatar(p.av, pn + (peer.guest ? ' ·' : ''), false), p, pos: V(+p.p[0] || 0, 0, +p.p[1] || 0), yaw: +p.r || 0, lastSay: p.say?.at || 0, lastPad: p.pad?.n || 0, joinedAt: Date.now() };
+        r = { avName: p.av, nick: pn, accSig: pac.k + pac.c, av: new Avatar(p.av, pn + (peer.guest ? ' ·' : ''), false, pac), p, lastRe: p.re?.at || 0, lastIx: p.ix?.at || 0, pos: V(+p.p[0] || 0, 0, +p.p[1] || 0), yaw: +p.r || 0, lastSay: p.say?.at || 0, lastPad: p.pad?.n || 0, joinedAt: Date.now() };
         remotes.set(peer.peer, r); r.av.load().then(() => { r.av.g.position.copy(r.pos); });
         if (Date.now() - (r.firstSeen ||= Date.now()) < 2000) toast(pn + ' è entrato nel locale');
       }
       r.p = p;
       if (p.say && typeof p.say.at === 'number' && p.say.at !== r.lastSay) { r.lastSay = p.say.at; const t = clean(p.say.t, 140); if (t && Date.now() - p.say.at < 20000) { r.av.say(t); addLog(pn, t, false); } }
+      if (p.re && typeof p.re.at === 'number' && p.re.at !== r.lastRe) { r.lastRe = p.re.at; if (REACTS.includes(p.re.e) && Date.now() - p.re.at < 8000) r.av.react(p.re.e); }
+      if (p.ix && typeof p.ix.at === 'number' && p.ix.at !== r.lastIx) { r.lastIx = p.ix.at; if (myKey && p.ix.to === myKey && Date.now() - p.ix.at < 30000) onIx(peer.peer, r, p.ix); }
       if (p.pad && typeof p.pad.n === 'number' && p.pad.n !== r.lastPad) { r.lastPad = p.pad.n; if (Date.now() - (p.pad.at || 0) < 4000 && ['horn', 'scratch', 'siren', 'clap'].includes(p.pad.id)) music.pad(p.pad.id); }
     }
     for (const [k, r] of remotes) if (!seen.has(k)) { r.av.dispose(); remotes.delete(k); toast(r.nick + ' è uscito'); }
@@ -464,7 +499,7 @@ export async function start(ctx) {
   }
 
   // ---------------- music state from everyone's dj field
-  function musicOn() { return !!(music.decks[0] || music.decks[1] || spotifyLive); }
+  function musicOn() { return !!(music.decks[0] || music.decks[1] || spotifyLive || liveEvent()); }
   let spotifyLive = false;
   let musicCheck = 0;
   function validDj(d) { return d && typeof d === 'object' && typeof d.at === 'number' && Array.isArray(d.d); }
@@ -481,7 +516,10 @@ export async function start(ctx) {
       if (d) bits.push({ i, d });
     }
     if (best) music.setXf(best.dj.x);
-    if (!bits.length) { now.hidden = true; filo.set(null); return; }
+    if (!bits.length) {
+      const ev = liveEvent(); if (ev && !best) { const len = 240000, k = Math.floor((Date.now() - ev.start) / len), ti = (k + ev.id.length) % TRACKS.length; music.setDeck(0, ti, ev.start + k * len); music.setDeck(1, -1, 0); music.setXf(0); window.__musicLevel = 1;
+        const sig = 'ev' + ev.id + ti; if (now.dataset.sig !== sig) { now.dataset.sig = sig; const t = document.createElement('span'); t.textContent = `Serata in corso · ${ev.title} · ${TRACKS[ti].name}`; now.replaceChildren(t); } now.hidden = false; filo.set(null); return; }
+      now.hidden = true; filo.set(null); return; }
     now.hidden = false;
     const xf = best.dj.x ?? 0; const main = bits.length === 2 ? (xf < 0.5 ? bits[0] : bits[1]) : bits[0];
     filo.set(main.d.k === 's' || bcOK(main.d) ? main.d : null);
@@ -541,14 +579,103 @@ export async function start(ctx) {
     room = r; renderPeople();
     if (!room) { toast(window.SP_STANDALONE ? 'Stanza dal vivo non raggiungibile: giochi da solo' : 'Sei da solo: condividi la pagina con i tuoi amici per giocare insieme'); return; }
     room.onPeers(ch => syncPeers(ch.peers), () => { toast('Connessione live non disponibile'); });
+    if (room.voice && voiceOK()) { micBtn.hidden = false; room.voice.on((from, v) => playVoice(from, v)); }
     pub(true);
   });
   renderPeople();
+
+  // ---------------- beer menu
+  const menuEl = $('lv-menu');
+  function closeSheets(except) { for (const id of ['lv-menu', 'lv-evp', 'lv-ix']) if (id !== except) $(id).hidden = true; $('lv-evb').setAttribute('aria-expanded', String(!$('lv-evp').hidden)); }
+  function sheetHead(title) { const h = document.createElement('div'); h.className = 'lv-shh'; const b = document.createElement('strong'); b.textContent = title; const x = document.createElement('button'); x.textContent = 'Chiudi'; x.onclick = () => closeSheets(); h.append(b, x); return h; }
+  function openMenu(where) {
+    closeSheets('lv-menu'); const list = BEERS.filter(b => b.where === where);
+    const rows = list.map(b => { const r = document.createElement('button'); r.className = 'lv-beer'; const sw = document.createElement('i'); sw.style.background = b.col; const t = document.createElement('span'); const nm = document.createElement('b'); nm.textContent = b.n; const meta = document.createElement('small'); meta.textContent = [b.br, b.st, abvTxt(b)].filter(Boolean).join(' · '); const nt = document.createElement('em'); nt.textContent = b.note; t.append(nm, meta, nt); const pr = document.createElement('span'); pr.className = 'lv-price'; pr.textContent = eur(b.price); r.append(sw, t, pr);
+      r.onclick = () => { me.hold = where === 'frigo' ? 'can' : 'cup'; me.bv = b.id; closeSheets(); toast(`${where === 'frigo' ? 'Lattina' : 'Alla spina'}: ${b.n} · ${b.st}`); pub(true); }; return r; });
+    const note = document.createElement('p'); note.className = 'lv-fn'; note.textContent = 'Prezzi indicativi.';
+    menuEl.replaceChildren(sheetHead(where === 'frigo' ? 'Frigo · lattine da asporto' : 'Alla spina'), ...rows, note); menuEl.hidden = false;
+  }
+  // ---------------- events: calendar sheet, countdown banner
+  function openEvents() {
+    const evp = $('lv-evp'); if (!evp.hidden) { closeSheets(); return; } closeSheets('lv-evp');
+    const list = eventsFrom(); const now = Date.now();
+    const rows = list.map(e => { const d = document.createElement('div'); d.className = 'lv-ev'; const w = document.createElement('small'); w.textContent = (e.start <= now ? 'IN CORSO · ' : '') + whenTxt(e); const t = document.createElement('b'); t.textContent = e.title; const h = document.createElement('span'); h.textContent = `${e.host} — ${e.desc}`; const a = document.createElement('a'); a.href = gcalURL(e); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Aggiungi al calendario'; d.append(w, t, h, a); return d; });
+    if (!rows.length) { const p = document.createElement('p'); p.textContent = 'Nessuna serata in programma.'; rows.push(p); }
+    evp.replaceChildren(sheetHead('Le serate del Sottoportico'), ...rows); evp.hidden = false; $('lv-evb').setAttribute('aria-expanded', 'true');
+  }
+  $('lv-evb').onclick = openEvents;
+  function renderNext() { const el = $('lv-next'); const live = liveEvent(), nx = eventsFrom()[0]; if (!nx) { el.hidden = true; return; } el.hidden = false; el.textContent = live ? `● In corso: ${live.title}` : `Prossima serata: ${nx.title} · ${whenTxt(nx)} · ${untilTxt(nx.start - Date.now())}`; el.classList.toggle('live', !!live); }
+  renderNext(); setInterval(renderNext, 30000); $('lv-next').onclick = openEvents;
+  // ---------------- time of day
+  const TODS = [['reale', 'Ora reale'], ['giorno', 'Giorno'], ['tramonto', 'Tramonto'], ['notte', 'Notte']]; let todI = 0;
+  const setTod = i => { todI = i; const [m, l] = TODS[i]; $('lv-tod').textContent = l; if (window.__tod) window.__tod(m); };
+  $('lv-tod').onclick = () => setTod((todI + 1) % TODS.length); setTod(0);
+  // ---------------- reactions
+  const REACTS = ['👏', '❤️', '😂', '🔥', '🍻', '🎶', '👋', '🙌'];
+  const reactEl = $('lv-react');
+  reactEl.replaceChildren(...REACTS.map(e => { const b = document.createElement('button'); b.textContent = e; b.setAttribute('aria-label', 'Reazione ' + e); b.onclick = () => { me.re = { e, at: Date.now() }; meAv.react(e); pub(true); reactEl.hidden = true; $('lv-emo').setAttribute('aria-expanded', 'false'); }; return b; }));
+  $('lv-emo').onclick = () => { reactEl.hidden = !reactEl.hidden; $('lv-emo').setAttribute('aria-expanded', String(!reactEl.hidden)); };
+  // ---------------- player-to-player interactions (sent as presence `ix`, only to the chosen player)
+  const ALB = (window.SP_ALBUMS || []).map(a => a.n).concat(TRACKS.map(t => t.name));
+  function sendIx(to, k, extra = {}) { me.ix = { to, k, at: Date.now(), ...extra }; pub(true); }
+  function openIx(peer) {
+    const r = remotes.get(peer); if (!r) return; closeSheets('lv-ix'); const ix = $('lv-ix');
+    const near = r.pos.distanceTo(me.pos) < 3.2;
+    const opts = [
+      ['🍺 Offri una birra', () => { const b = BEERS.filter(x => x.where === 'frigo')[Math.floor(Math.random() * 8)]; sendIx(peer, 'beer', { b: b.id }); toast(`Hai offerto una ${b.n} a ${r.nick}`); }],
+      ['🥂 Brindiamo', () => { if (!near) { walkTo(V(r.pos.x + 0.8, 0, r.pos.z), null); toast('Avvicinati per brindare'); return; } sendIx(peer, 'cheers'); cheers(r); }],
+      ['💃 Balla con me', () => { sendIx(peer, 'dance'); toast(`Hai invitato ${r.nick} a ballare`); }],
+      ['💿 Regala un disco', () => { const a = ALB[Math.floor(Math.random() * ALB.length)]; sendIx(peer, 'gift', { a }); meAv.flashRecord(); toast(`Hai regalato «${a}» a ${r.nick}`); }],
+      ['👋 Saluta', () => { sendIx(peer, 'wave'); me.re = { e: '👋', at: Date.now() }; meAv.react('👋'); pub(true); }],
+      ['🚶 Raggiungi', () => walkTo(V(r.pos.x + 0.8, 0, r.pos.z + 0.4), null)],
+    ];
+    ix.replaceChildren(sheetHead(r.nick), ...opts.map(([l, f]) => { const b = document.createElement('button'); b.textContent = l; b.onclick = () => { closeSheets(); f(); }; return b; })); ix.hidden = false;
+  }
+  function cheers(r) { me.drinkT = 3; if (!me.hold) { me.hold = 'cup'; me.bv = ''; } meAv.say('Cin cin!'); me.say = { t: 'Cin cin!', at: Date.now() }; me.yaw = Math.atan2(r.pos.x - me.pos.x, r.pos.z - me.pos.z); clink(); pub(true); }
+  function clink() { music.init(); music.resume(); const c = music.ctx; if (!c) return; const t = c.currentTime + 0.02; for (const [f, d] of [[2637, 0], [3520, 0.06]]) { const o = c.createOscillator(), g = c.createGain(); o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t + d); g.gain.exponentialRampToValueAtTime(0.12, t + d + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.6); o.connect(g).connect(c.destination); o.start(t + d); o.stop(t + d + 0.7); } }
+  function ask(text, yes, no = 'No, grazie') { const a = $('lv-ask'); const p = document.createElement('p'); p.textContent = text; const by = document.createElement('button'); by.className = 'primary'; by.textContent = yes[0]; by.onclick = () => { a.hidden = true; yes[1](); }; const bn = document.createElement('button'); bn.textContent = no; bn.onclick = () => { a.hidden = true; }; a.replaceChildren(p, by, bn); a.hidden = false; clearTimeout(ask._t); ask._t = setTimeout(() => { a.hidden = true; }, 15000); }
+  function onIx(peer, r, ix) {
+    const k = ix.k;
+    if (k === 'beer') { const b = BEERS.find(x => x.id === ix.b) || BEERS.find(x => x.where === 'frigo'); ask(`${r.nick} ti offre una ${b.n} (${b.st})`, ['Accetta', () => { me.hold = 'can'; me.bv = b.id; me.say = { t: 'Grazie!', at: Date.now() }; meAv.say('Grazie!'); pub(true); }]); }
+    else if (k === 'cheers') { toast(`${r.nick} brinda con te`); cheers(r); }
+    else if (k === 'dance') ask(`${r.nick} ti invita a ballare`, ['Balliamo', () => { const ok = walkTo(V(r.pos.x + 0.9, 0, r.pos.z + 0.3), null); const go = () => { if (me.st === 'walk') return setTimeout(go, 300); me.st = 'dance'; me.yaw = Math.atan2(r.pos.x - me.pos.x, r.pos.z - me.pos.z); pub(true); }; if (ok) setTimeout(go, 300); else { me.st = 'dance'; pub(true); } }]);
+    else if (k === 'gift') { const a = clean(ix.a, 60); meAv.flashRecord(); meAv.rec.visible = true; meAv.recT = 6; toast(`${r.nick} ti ha regalato un disco: «${a}»`); }
+    else if (k === 'wave') { toast(`${r.nick} ti saluta`); meAv.react('👋'); }
+  }
+  // ---------------- voice messages (only where the room can carry them and the browser allows the mic)
+  const micBtn = $('lv-mic'); let rec = null, chunks = [], recStart = 0;
+  const voiceOK = () => room && room.voice && navigator.mediaDevices?.getUserMedia && window.MediaRecorder;
+  async function micDown(e) { e.preventDefault(); if (rec) return; try { const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); const mt = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+      rec = new MediaRecorder(st, { mimeType: mt, audioBitsPerSecond: 24000 }); chunks = []; rec.ondataavailable = ev => chunks.push(ev.data); rec.onstop = () => sendVoice(new Blob(chunks, { type: rec.mimeType }), st); rec.start(); recStart = Date.now(); micBtn.classList.add('on'); meAv.speaking(true); setTimeout(() => { if (rec && rec.state === 'recording') rec.stop(); }, 10000);
+    } catch (err) { toast('Il microfono non è disponibile: controlla i permessi del browser'); } }
+  function micUp() { if (rec && rec.state === 'recording') rec.stop(); }
+  async function sendVoice(blob, stream) { stream.getTracks().forEach(t => t.stop()); micBtn.classList.remove('on'); meAv.speaking(false); const r0 = rec; rec = null; if (Date.now() - recStart < 400 || blob.size < 800) return; if (blob.size > 180000) { toast('Messaggio troppo lungo'); return; }
+    const b64 = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); });
+    room.voice.send({ n: nick, t: blob.type, d: b64, at: Date.now() }); addLog(nick, '🎙 messaggio vocale', true); void r0; }
+  micBtn.addEventListener('pointerdown', micDown); micBtn.addEventListener('pointerup', micUp); micBtn.addEventListener('pointerleave', micUp); micBtn.addEventListener('contextmenu', e => e.preventDefault());
+  function playVoice(from, v) { const r = remotes.get(from); if (!r || typeof v?.d !== 'string' || v.d.length > 260000 || !/^audio\/(webm|mp4|ogg)/.test(String(v.t))) return;
+    const bin = atob(v.d); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([u], { type: v.t })); const au = new Audio(url); const dist = r.pos.distanceTo(me.pos); au.volume = Math.max(0.15, Math.min(1, 1.2 - dist / 25));
+    r.av.speaking(true); addLog(r.nick, '🎙 messaggio vocale', false); au.onended = () => { r.av.speaking(false); URL.revokeObjectURL(url); }; au.play().catch(() => { r.av.speaking(false); toast(`${r.nick} ti ha mandato un vocale: tocca «Audio» per attivare l'audio`); }); }
+  // ---------------- thumb joystick (touch screens)
+  const joy = $('lv-joy'), knob = joy.querySelector('i'); let joyV = null, joyId = null;
+  if (matchMedia('(pointer: coarse)').matches) joy.hidden = false;
+  joy.addEventListener('pointerdown', e => { joyId = e.pointerId; try { joy.setPointerCapture(e.pointerId); } catch (err) { } joyMove(e); });
+  joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) joyMove(e); });
+  const joyEnd = e => { if (e.pointerId !== joyId) return; joyId = null; joyV = null; knob.style.transform = ''; if (me.st === 'walk' && !me.path.length) { me.st = 'idle'; pub(true); } };
+  joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd);
+  function joyMove(e) { const r = joy.getBoundingClientRect(); let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2); const m = Math.hypot(dx, dy), R = r.width / 2 - 14; if (m > R) { dx *= R / m; dy *= R / m; } knob.style.transform = `translate(${dx}px,${dy}px)`; joyV = m > 8 ? { x: dx / R, y: dy / R } : null; }
+  function joyStep(dt) { if (!joyV) return; if (me.st === 'sit' || me.st === 'dj') standUp(true); me.path = []; me.pending = null;
+    const f = V(); camera.getWorldDirection(f); f.y = 0; f.normalize(); const rgt = V(-f.z, 0, f.x); const dir = f.multiplyScalar(-joyV.y).add(rgt.multiplyScalar(joyV.x)); const mag = Math.min(1, dir.length()); if (mag < 0.05) return; dir.normalize();
+    const sp = 1.9 * mag * dt; const nx = V(me.pos.x + dir.x * sp, 0, me.pos.z + dir.z * sp);
+    if (free(...cellOf(nx))) me.pos.copy(nx); else { const ax = V(nx.x, 0, me.pos.z), az = V(me.pos.x, 0, nx.z); if (free(...cellOf(ax))) me.pos.copy(ax); else if (free(...cellOf(az))) me.pos.copy(az); }
+    let dy2 = Math.atan2(dir.x, dir.z) - me.yaw; dy2 = Math.atan2(Math.sin(dy2), Math.cos(dy2)); me.yaw += dy2 * Math.min(1, dt * 10); if (me.st !== 'walk') me.st = 'walk'; pub(); }
 
   // ---------------- per-frame
   const fwd = V(), tmp = V();
   frameHooks.push(dt => {
     // local movement
+    joyStep(dt);
     if (me.path.length) {
       const tgt = me.path[0]; tmp.subVectors(tgt, me.pos); tmp.y = 0; const d = tmp.length();
       const step = 1.45 * dt;
@@ -558,7 +685,7 @@ export async function start(ctx) {
     if (me.drinkT > 0) { me.drinkT -= dt; if (me.drinkT <= 0) pub(true); }
     if (me.talkT > 0) { me.talkT -= dt; if (me.talkT <= 0) pub(true); }
     meAv.g.position.copy(me.pos); meAv.g.rotation.y = me.yaw;
-    meAv.play(animKey(me.st, me.seat, me.drinkT > 0, me.talkT > 0, !!me.hold)); meAv.setHold(me.hold); meAv.update(dt);
+    meAv.play(animKey(me.st, me.seat, me.drinkT > 0, me.talkT > 0, !!me.hold)); meAv.setHold(me.hold, me.bv); meAv.update(dt);
     // camera follow
     const t = me.pos.clone().add(V(0, me.st === 'sit' ? 1.0 : 1.45, 0)); const delta = t.clone().sub(controls.target); camera.position.add(delta); controls.target.copy(t);
     { // keep the camera inside the room / under the portico ceiling
@@ -584,7 +711,7 @@ export async function start(ctx) {
       let dy = (+p.r || 0) - r.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); r.yaw += dy * Math.min(1, dt * 8);
       const moving = dist > 0.05 || p.st === 'walk';
       r.av.g.position.copy(r.pos); r.av.g.rotation.y = r.yaw;
-      r.av.play(moving && p.st !== 'sit' && p.st !== 'dj' ? 'walk' : animKey(p.st, p.seat, !!p.dr, !!p.tk, !!p.h)); r.av.setHold(['can', 'cup'].includes(p.h) ? p.h : ''); r.av.update(dt);
+      r.av.play(moving && p.st !== 'sit' && p.st !== 'dj' ? 'walk' : animKey(p.st, p.seat, !!p.dr, !!p.tk, !!p.h)); r.av.setHold(['can', 'cup'].includes(p.h) ? p.h : '', typeof p.bv === 'string' ? p.bv.slice(0, 40) : ''); r.av.update(dt);
     }
     // marker pulse, tap ring
     if (tapT > 0) { tapT -= dt; tapRing.material.opacity = Math.max(0, tapT); tapRing.scale.setScalar(1 + (0.8 - tapT)); if (tapT <= 0) tapRing.visible = false; }
@@ -608,7 +735,7 @@ export async function start(ctx) {
     if (talking) return 'talk';
     return holding ? 'hold' : 'idle';
   }
-  window.__live = { me, meAv, remotes, loadDeck: (i, tr) => loadDeck(i, { k: 'v', tr }), loadSp: (i, n, a, u) => loadDeck(i, { k: 's', n, a, u }), xf: x => { const st = djState(); st.x = x; music.setXf(x); pub(true); }, walkTo: (x, z) => walkTo(V(x, 0, z)), doHot: id => doHot(hot.find(h => h.id === id)), say: t => { $('lv-msg').value = t; $('lv-chat').requestSubmit(); }, dj: i => loadDeck(target, { k: 'v', tr: i }), pad: id => hud.querySelector(`[data-pad="${id}"]`).click(), sit: i => doHot(hot.find(h => h.seat === i)) };
+  window.__live = { me, meAv, remotes, loadDeck: (i, tr) => loadDeck(i, { k: 'v', tr }), loadSp: (i, n, a, u) => loadDeck(i, { k: 's', n, a, u }), xf: x => { const st = djState(); st.x = x; music.setXf(x); pub(true); }, walkTo: (x, z) => walkTo(V(x, 0, z)), doHot: id => doHot(hot.find(h => h.id === id)), say: t => { $('lv-msg').value = t; $('lv-chat').requestSubmit(); }, dj: i => loadDeck(target, { k: 'v', tr: i }), pad: id => hud.querySelector(`[data-pad="${id}"]`).click(), sit: i => doHot(hot.find(h => h.seat === i)), ix: peer => openIx(peer), menu: w => openMenu(w), events: () => openEvents() };
   toast('Tocca il pavimento per camminare');
 }
 
@@ -626,6 +753,20 @@ function injectCSS() {
   .lv-av[aria-checked="true"]{border-color:var(--amber);box-shadow:0 0 0 2px var(--amber)}
   .lv-note{font-size:13px;line-height:1.45;color:#F2EADAcc;margin:4px 0 0}
   .lv-hud{position:fixed;inset:0;pointer-events:none;z-index:3}
+  .lv-accs{display:flex;flex-wrap:wrap;gap:6px}.lv-chip{min-height:34px;font-size:13px;padding:0 12px;border-radius:999px}.lv-chip[aria-pressed="true"]{background:var(--amber);color:#161616}
+  .lv-cols{display:flex;gap:8px}.lv-cols[hidden]{display:none}.lv-col{width:34px;height:34px;min-height:34px;padding:0;border-radius:50%;border:2px solid #F2EADA44}.lv-col[aria-pressed="true"]{border-color:#F2EADA;box-shadow:0 0 0 2px var(--amber)}
+  .lv-next{position:absolute;left:50%;transform:translateX(-50%);top:12px;max-width:min(560px,calc(100vw - 24px));background:#121216e6;border:1px solid #EEA64055;border-radius:999px;padding:7px 14px;font:500 12px 'IBM Plex Mono',monospace;color:#EEA640;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lv-next.live{background:#4A1C26f0;color:#F2EADA;border-color:#e5484d}.lv-next[hidden]{display:none}
+  .lv-sheet{position:absolute;right:12px;top:100px;width:min(380px,calc(100vw - 24px));max-height:calc(100vh - 260px);overflow:auto;background:#121216f2;border:1px solid #F2EADA22;border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:6px;z-index:4}
+  .lv-sheet[hidden],.lv-ask[hidden],.lv-react[hidden],.lv-joy[hidden],#lv-mic[hidden]{display:none}
+  .lv-shh{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px}.lv-shh button{min-height:30px;font-size:12px;padding:0 10px}
+  .lv-beer{flex:none;height:auto;white-space:normal;line-height:1.25;display:flex;gap:10px;align-items:flex-start;text-align:left;padding:8px;min-height:0;background:#ffffff0a;border-radius:10px}.lv-beer i{flex:none;width:14px;height:38px;border-radius:4px;margin-top:2px}.lv-beer span{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}.lv-beer small{font:500 11px 'IBM Plex Mono',monospace;opacity:.75}.lv-beer em{font-style:normal;font-size:12px;opacity:.85;line-height:1.3}.lv-beer .lv-price{flex:none;font:600 13px 'IBM Plex Mono',monospace;color:#EEA640}
+  .lv-ev{flex:none;display:flex;flex-direction:column;gap:3px;padding:8px;background:#ffffff0a;border-radius:10px}.lv-ev small{font:500 11px 'IBM Plex Mono',monospace;color:#EEA640;text-transform:uppercase}.lv-ev span{font-size:12.5px;opacity:.85;line-height:1.35}.lv-ev a{color:#EEA640;font-size:12.5px}
+  .lv-ixs button{text-align:left;flex:none}
+  .lv-ask{position:absolute;left:50%;top:30%;transform:translateX(-50%);width:min(360px,calc(100vw - 32px));background:#121216f5;border:1px solid #EEA640;border-radius:14px;padding:14px;display:flex;flex-wrap:wrap;gap:8px;z-index:6}.lv-ask p{flex-basis:100%;margin:0 0 4px;font-size:15px}
+  .lv-react{display:flex;gap:4px;flex-wrap:wrap}.lv-react button{min-height:40px;min-width:44px;font-size:22px;padding:0;background:#121216e0}
+  #lv-emo,#lv-mic{min-width:44px;padding:0;font-size:20px;background:#121216e0}#lv-mic.on{background:#e5484d;box-shadow:0 0 0 4px #e5484d55}
+  .lv-joy{position:absolute;left:18px;bottom:150px;width:116px;height:116px;border-radius:50%;background:#12121666;border:2px solid #F2EADA55;touch-action:none;z-index:4}.lv-joy i{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;background:#EEA640cc;box-shadow:0 2px 8px #0008;transition:transform .05s}
   .lv-hud>*{pointer-events:auto}
   .lv-top{position:absolute;right:12px;top:56px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
   .lv-pill{min-height:36px;font-size:13px;padding:0 12px;background:#121216d9;font-family:'IBM Plex Mono',monospace;font-weight:500;display:flex;align-items:center;gap:6px}
@@ -681,7 +822,7 @@ function injectCSS() {
   .lv-pads{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
   .lv-pads button{background:#4A1C26;border-color:#4A1C26;font-size:13px;padding:0 4px}
   #top{pointer-events:none}
-  @media (max-width:520px){.lv-top{top:52px}.lv-now{top:96px;max-width:70vw}.lv-filo{top:140px}.lv-toast{top:140px}.lv-dj{bottom:118px}}
+  @media (max-width:520px){.lv-next{top:136px;font-size:11px}.lv-sheet{top:136px;max-height:calc(100vh - 330px)}.lv-top{top:52px}.lv-now{top:170px;max-width:70vw}.lv-filo{top:210px}.lv-toast{top:140px}.lv-dj{bottom:118px}}
   `;
   document.head.appendChild(s);
 }
