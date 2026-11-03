@@ -311,13 +311,24 @@ const towerATex = canvasTex(512, 1024, (g, w, h) => {
   g.fillStyle = '#c9ccd0'; for (let x = 0; x < w; x += 128) g.fillRect(x, 0, 8, h);
 });
 towerATex.wrapS = towerATex.wrapT = THREE.RepeatWrapping;
-tower(31, 50, 12, 82, 4.4, 70, towerATex, 2);
-{ const n = 21, o = new THREE.Object3D();
+tower(31, 50, 12, 82, 11.2, 74, towerATex, 2);
+// two-storey podium as in Street View: tall mullioned glazing with orange panels, cantilevered glass band on top
+{ const podTex = canvasTex(512, 256, (g, w, h) => { g.fillStyle = '#2b333b'; g.fillRect(0, 0, w, h);
+    for (let x = 0; x < w; x += 32) { for (let y = 0; y < h; y += 42) { const c = ((x * 7 + y * 3) % 11 === 0) ? '#d9792e' : ((x + y) % 5 === 0 ? '#5b6a74' : '#36414a'); g.fillStyle = c; g.fillRect(x + 4, y + 4, 24, 34); } g.fillStyle = '#c9c3b6'; g.fillRect(x, 0, 4, h); }
+    g.fillStyle = '#c9c3b6'; g.fillRect(0, h / 2 - 3, w, 6); });
+  podTex.wrapS = THREE.RepeatWrapping; podTex.repeat.set(70 / 6, 1);
+  box(18.6, 6.6, 70, STD({ color: 0xd6cfc0, roughness: 0.85 }), 40.6, 7.9, 47); // podium body
+  plane(70, 6.4, STD({ map: podTex, roughness: 0.2, metalness: 0.3, envMapIntensity: 0.8, emissive: 0xffc98a, emissiveIntensity: 0.06 }), 31.28, 7.9, 47, -Math.PI / 2);
+  box(2.4, 0.25, 70, mCurb, 30.3, 11.15, 47); // slab edge
+  const gb = box(1.2, 1.5, 70, new THREE.MeshPhysicalMaterial({ color: 0xcfe3e6, roughness: 0.08, transparent: true, opacity: 0.45, metalness: 0.2 }), 29.7, 12.05, 47, scene, false); gb.renderOrder = 2;
+  box(1.25, 0.1, 70, STD({ color: 0x8e9396, metalness: 0.7, roughness: 0.3 }), 29.7, 12.85, 47);
+}
+{ const n = 20, o = new THREE.Object3D();
   const slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1.5, 0.22, 70), STD({ color: 0xa69a86, roughness: 0.85 }), n);
   const para = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.95, 70), STD({ color: 0x9a8e7a, roughness: 0.85 }), n);
-  for (let i = 0; i < n; i++) { const y = 4.6 + i * 3.1; o.position.set(30.25, y, 47); o.updateMatrix(); slabs.setMatrixAt(i, o.matrix); o.position.set(29.55, y + 0.55, 47); o.updateMatrix(); para.setMatrixAt(i, o.matrix); }
+  for (let i = 0; i < n; i++) { const y = 13.4 + i * 3.05; o.position.set(30.25, y, 47); o.updateMatrix(); slabs.setMatrixAt(i, o.matrix); o.position.set(29.55, y + 0.55, 47); o.updateMatrix(); para.setMatrixAt(i, o.matrix); }
   slabs.castShadow = para.castShadow = true; slabs.receiveShadow = para.receiveShadow = true; scene.add(slabs, para);
-  for (let i = 0; i < n; i += 2) for (let z = 14; z < 80; z += 2.4) if ((i * 7 + z) % 3 < 1.6) card('shrub', 29.6, 4.6 + i * 3.1 + 1.15, z + Math.random(), 0.7, 0, Math.PI / 2, Math.random() * 6);
+  for (let i = 0; i < n; i += 2) for (let z = 14; z < 80; z += 2.4) if ((i * 7 + z) % 3 < 1.6) card('shrub', 29.6, 13.4 + i * 3.05 + 1.15, z + Math.random(), 0.7, 0, Math.PI / 2, Math.random() * 6);
   // glazed ground floor + arcade
   box(0.06, 3.6, 66, STD({ color: 0x2c3540, emissive: 0xffc98a, emissiveIntensity: 0.25, roughness: 0.15, metalness: 0.4 }), 31.2, 1.8, 47, scene, false);
   for (let z = 14; z <= 80; z += 4.4) { box(0.55, 4.4, 0.55, mColumn, 29.3, 2.2, z); obBox(29.0, z - 0.3, 29.6, z + 0.3); }
@@ -338,6 +349,52 @@ box(2.2, 0.3, 68, mCeil, -17.3, 4.05, 45, scene, false);
   for (let k = 0; k < 6; k++) box(12, 0.2, 0.42, mCurb, 7, -0.1 - k * 0.2, 77.2 + k * 0.42, scene, false);
   railing(1, 13, 76.9); obBox(1, 76.8, 13, 82.2);
 }
+
+// ---------------- elevated deck between the library and Tower A («BIBLIOTECA ACCLAVIO» · «ROOFTOP»), portico beneath ----------------
+{ const mDeck = STD({ color: 0xd8d3c8, roughness: 0.8 }), mRail = STD({ color: 0x2f5a3c, metalness: 0.4, roughness: 0.5 });
+  const z0 = 60.5, z1 = 66.5, zc = (z0 + z1) / 2, x0 = 5.5, x1 = 30.5, xc = (x0 + x1) / 2, L = x1 - x0;
+  box(L, 1.1, z1 - z0, mDeck, xc, 5.05, zc); box(L + 0.2, 0.2, z1 - z0 + 0.2, mCurb, xc, 5.65, zc);
+  box(L, 0.08, z1 - z0, STD({ color: 0xbcb6aa, roughness: 0.9 }), xc, 4.46, zc, scene, false); // soffit
+  for (const x of [8, 22.5, 28]) for (const z of [z0 + 0.6, z1 - 0.6]) { box(0.6, 4.5, 0.6, mColumn, x, 2.25, z); obBox(x - 0.35, z - 0.35, x + 0.35, z + 0.35); }
+  // green railing + planters on the deck
+  for (const z of [z0 + 0.05, z1 - 0.05]) { box(L, 0.06, 0.06, mRail, xc, 6.75, z); for (let x = x0 + 0.2; x < x1; x += 0.16) box(0.025, 1.0, 0.025, mRail, x, 6.25, z, scene, false, false); }
+  for (let x = x0 + 1.5; x < x1 - 1; x += 3.2) { box(1.6, 0.5, 0.6, mCurb, x, 6.0, z0 + 0.6); bush('shrub', x, 6.2, z0 + 0.6, 0.6, 6); }
+  for (const [txt, x, w] of [['BIBLIOTECA ACCLAVIO', 10.5, 5.2], ['ROOFTOP', 24.5, 3.4]]) {
+    const t = textTex([{ text: txt, size: txt.length > 8 ? 70 : 96, color: '#2a2a2a', weight: 700, mono: txt.length <= 8 }], 1024, 150, '#ecebe6');
+    plane(w, 0.72, STD({ map: t, roughness: 0.7 }), x, 5.05, z0 - 0.02, Math.PI); }
+  // link to the library drum
+  box(3.2, 1.1, 4.2, mDeck, LIB.x + 11.6, 5.05, 60.8); }
+// white concrete planters with shrubs, as on the real piazza
+{ const mP = STD({ color: 0xe4e1da, roughness: 0.85 });
+  for (const [x, z, w, d] of [[6, 22, 2.2, 1], [9, 26, 1, 2.2], [3.5, 36.5, 2.2, 1], [7.5, 44, 1, 2.2], [24, 22, 2.2, 1], [27.5, 30, 1, 2.2], [26.5, 48, 2.2, 1], [8.5, 56, 2.2, 1], [3.8, 58.5, 1.6, 1], [25.5, 58, 1, 2.2], [-11, 35.5, 2.4, 1], [-12.5, 59, 1.4, 2.4]]) {
+    box(w, 0.55, d, mP, x, 0.275, z); box(w - 0.12, 0.03, d - 0.12, mSoil, x, 0.55, z, scene, false); bush(rnd() < 0.3 ? 'flowerbed' : 'shrub', x, 0.6, z, Math.min(w, d) * 0.45, 7); obBox(x - w / 2 - 0.05, z - d / 2 - 0.05, x + w / 2 + 0.05, z + d / 2 + 0.05); } }
+// turquoise sculptural seats near the library
+{ const mT = STD({ color: 0x3fa7a0, roughness: 0.5 });
+  for (const [x, z, r] of [[5.2, 40.5, 0.4], [4.2, 52.5, -0.6]]) { const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = r; scene.add(g);
+    const arc = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.22, 12, 24, Math.PI), mT); arc.position.y = 0.0; arc.scale.set(1.4, 0.8, 1); g.add(arc);
+    const top = box(1.7, 0.18, 0.62, mT, 0, 0.44, 0, g); obCirc(x, z, 0.9); } }
+// olive-green crown volumes and striped glazed stair towers on the fin towers
+{ const mOlive = STD({ color: 0x9aa36a, roughness: 0.8 }), mOliveD = STD({ color: 0x7f8a55, roughness: 0.8 });
+  for (const [x, z, h] of [[-30, -2, 58], [-22, -2, 58], [-30, 30, 58], [-24, 46, 50], [-1, 8, 62], [9, 8, 62]]) { box(4.2, 5 + (x % 3), 4.2, (x + z) % 2 ? mOlive : mOliveD, x, h + 2.5, z); }
+  const stripe = canvasTex(64, 512, (g, w, h) => { g.fillStyle = '#d7d4cb'; g.fillRect(0, 0, w, h); g.fillStyle = '#2d3238'; for (let y = 0; y < h; y += 16) g.fillRect(6, y + 3, w - 12, 9); });
+  stripe.wrapT = THREE.RepeatWrapping; stripe.repeat.set(1, 10);
+  for (const [x, z] of [[-16.6, 22], [-16.6, 50]]) box(1.6, 50, 3.2, STD({ map: stripe, roughness: 0.6 }), x, 4.2 + 25, z); }
+// the street beyond the deck: asphalt, parking bays with cars, crossing, red-brick tower beyond the complex
+{ box(60, 0.06, 12, mAsphalt, 7, -0.03, 98, scene, false);
+  const mLine = new THREE.MeshBasicMaterial({ color: 0xd7a33a });
+  box(46, 0.01, 0.12, mLine, 7, 0.02, 93.3, scene, false);
+  for (let k = 0; k < 6; k++) box(0.5, 0.012, 3.2, STD({ color: 0xf2f2ee, roughness: 0.8 }), 26 + k * 0.9, 0.02, 98, scene, false);
+  const carCols = [0xb9bcc0, 0x1c2433, 0x2b2b2b, 0xe8e8e4, 0x6d7276, 0x30343a, 0x8a1f24];
+  function car(x, z, ry, col) { const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; scene.add(g);
+    const mB = STD({ color: col, metalness: 0.6, roughness: 0.35, envMapIntensity: 0.9 }), mW = STD({ color: 0x1a1f24, roughness: 0.1, metalness: 0.5, envMapIntensity: 1.2 });
+    box(1.75, 0.62, 4.1, mB, 0, 0.62, 0, g); const c = box(1.55, 0.55, 2.1, mW, 0, 1.18, -0.2, g); box(1.5, 0.06, 2.0, mB, 0, 1.47, -0.2, g);
+    for (const [a, b] of [[-0.82, 1.3], [0.82, 1.3], [-0.82, -1.3], [0.82, -1.3]]) { const w = cyl(0.32, 0.32, 0.22, STD({ color: 0x111111 }), a, 0.32, b, g, 16); w.rotation.z = Math.PI / 2; }
+    box(1.6, 0.12, 0.05, new THREE.MeshBasicMaterial({ color: 0xaa1515 }), 0, 0.82, -2.06, g); }
+  for (let i = 0; i < 9; i++) car(-12 + i * 2.6, 95.6, 0.04 * (i % 3 - 1), carCols[i % carCols.length]);
+  for (let i = 0; i < 4; i++) car(30 + i * 2.6, 95.6, 0, carCols[(i + 3) % carCols.length]);
+  const brickTex = canvasTex(256, 512, (g, w, h) => { g.fillStyle = '#9a4a32'; g.fillRect(0, 0, w, h); for (let y = 0; y < h; y += 4) { g.fillStyle = `rgba(0,0,0,${0.05 + Math.random() * 0.06})`; g.fillRect(0, y, w, 1); } g.fillStyle = '#e8e2d6'; for (let y = 20; y < h; y += 52) for (let x = 30; x < w; x += 90) g.fillRect(x, y, 26, 18); });
+  brickTex.wrapS = brickTex.wrapT = THREE.RepeatWrapping; brickTex.repeat.set(2, 3);
+  box(16, 30, 14, STD({ map: brickTex, roughness: 0.9 }), 56, 15, 104); box(14, 26, 12, STD({ map: brickTex, roughness: 0.9 }), -32, 13, 108); }
 
 // ---------------- vegetation (alpha cards) ----------------
 const leafTex = {};
@@ -390,7 +447,7 @@ function palm(x, z, H = 7) {
   for (let i = 0; i < 26; i++) { const m = new THREE.Mesh(fg, mFrond); m.position.set(x, H, z); m.rotation.set(0, (i / 26) * Math.PI * 2 + Math.random() * 0.2, 0); m.rotateX(-0.35 - (i % 3) * 0.25 - Math.random() * 0.2); m.castShadow = true; scene.add(m); }
   const crown = new THREE.Mesh(new THREE.SphereGeometry(0.62, 12, 8), STD({ color: 0x5a6b33, roughness: 0.9 })); crown.position.set(x, H + 0.1, z); scene.add(crown);
 }
-palm(9.5, 33); palm(9.5, 61, 8); palm(-12.5, 26, 6.5);
+palm(9.5, 33); palm(9.5, 55.5, 4.2); palm(-12.5, 26, 6.5);
 function umbrellaPine(x, z, H = 9) {
   const tm = STD({ color: 0x6a4e3a, roughness: 0.95 }); const t = cyl(0.3, 0.45, H, tm, x, H / 2, z, scene, 12); t.rotation.z = 0.08; obCirc(x, z, 0.6);
   for (let i = 0; i < 260; i++) { const a = Math.random() * 6.28, d = Math.sqrt(Math.random()) * 4.6; card('shrub', x + Math.cos(a) * d + 0.5, H + 0.2 + Math.random() * 1.1 - d * 0.12, z + Math.sin(a) * d, 0.9 + Math.random() * 0.5, -Math.PI / 2 + (Math.random() - 0.5) * 0.6, Math.random() * 6.28, Math.random() * 6.28); }
