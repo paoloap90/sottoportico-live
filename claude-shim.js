@@ -6,40 +6,53 @@
   const SUPABASE_URL = 'https://szwjurytwbvblvhqbjet.supabase.co';
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN6d2p1cnl0d2J2Ymx2aHFiamV0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM0MzE0NzksImV4cCI6MjEwOTAwNzQ3OX0.HzQTmJbPJ6GemakL5dx7xKlyVLZLipxipYqBpOunEZs';
   const CHANNEL = 'sottoportico-live';
-  const SEND_EVERY_MS = 220; // ~4-5 aggiornamenti al secondo per giocatore
+  const SEND_EVERY_MS = 250; // ~4 aggiornamenti al secondo per giocatore (Broadcast)
 
   let roomP = null;
+  // Presence (limited by Supabase to a few updates) only says WHO is in the room;
+  // the moving state (position, chat, console) travels as Broadcast messages.
   async function makeRoom() {
     const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
-    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { realtime: { params: { eventsPerSecond: 10 } } });
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { realtime: { params: { eventsPerSecond: 8 } } });
     const me = 'p' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-    const ch = sb.channel(CHANNEL, { config: { presence: { key: me } } });
-    let myP = {}, subs = [], connected = false, peersArr = [], lastSent = 0, timer = null;
+    const ch = sb.channel(CHANNEL, { config: { presence: { key: me }, broadcast: { self: false, ack: false } } });
+    let myP = {}, subs = [], connected = false, peersArr = [], lastSent = 0, timer = null, tracked = false;
+    const states = new Map(); // peer -> { p, at }
     const connSubs = [];
     const build = () => {
-      const st = ch.presenceState(); const arr = []; let hasMe = false;
-      for (const [k, metas] of Object.entries(st)) {
-        const m = (metas && metas[metas.length - 1]) || {}; const p = { ...m }; delete p.presence_ref;
-        if (k === me) hasMe = true;
-        arr.push({ peer: k, isMe: k === me, sameTab: k === me, kind: 'viewer', guest: false, by: null, presence: k === me ? myP : p, updatedAt: Date.now() });
-      }
-      if (!hasMe) arr.unshift({ peer: me, isMe: true, sameTab: true, kind: 'viewer', guest: false, by: null, presence: myP, updatedAt: Date.now() });
+      const keys = new Set(Object.keys(ch.presenceState()));
+      for (const k of states.keys()) if (!keys.has(k) && Date.now() - states.get(k).at > 15000) states.delete(k);
+      for (const k of states.keys()) keys.add(k); // a peer that broadcasts is here even if presence lags
+      keys.delete(me);
+      const arr = [{ peer: me, isMe: true, sameTab: true, kind: 'viewer', guest: false, by: null, presence: myP, updatedAt: Date.now() }];
+      for (const k of keys) { const s = states.get(k); if (!s) continue; arr.push({ peer: k, isMe: false, sameTab: false, kind: 'viewer', guest: false, by: null, presence: s.p, updatedAt: s.at }); }
       peersArr = arr;
       for (const f of subs) { try { f({ peers: arr, joined: [], left: [], updated: [] }); } catch (e) { console.error(e); } }
     };
-    ch.on('presence', { event: 'sync' }, build);
-    const flush = async () => { timer = null; if (!connected) return; lastSent = Date.now(); try { await ch.track(myP); } catch (e) { /* ritenta al prossimo cambio */ } };
+    let buildT = null; const soon = () => { if (!buildT) buildT = setTimeout(() => { buildT = null; build(); }, 60); };
+    ch.on('presence', { event: 'sync' }, soon);
+    ch.on('presence', { event: 'leave' }, ({ key }) => { states.delete(key); soon(); });
+    ch.on('broadcast', { event: 'st' }, ({ payload }) => { if (!payload || typeof payload.k !== 'string' || payload.k === me || typeof payload.p !== 'object') return; states.set(payload.k, { p: payload.p, at: Date.now() }); soon(); });
+    ch.on('broadcast', { event: 'bye' }, ({ payload }) => { if (payload && payload.k) { states.delete(payload.k); soon(); } });
+    ch.on('broadcast', { event: 'hello' }, () => { lastSent = 0; schedule(); });
+    const flush = () => { timer = null; if (!connected) return; lastSent = Date.now(); ch.send({ type: 'broadcast', event: 'st', payload: { k: me, p: myP } }).catch(() => { }); };
     const schedule = () => { if (timer) return; timer = setTimeout(flush, Math.max(0, SEND_EVERY_MS - (Date.now() - lastSent))); };
+    setInterval(() => { if (connected && Date.now() - lastSent > 2500) flush(); soon(); }, 2500); // heartbeat + cleanup
     const ok = await new Promise((res) => {
       let done = false;
       ch.subscribe((status) => {
-        if (status === 'SUBSCRIBED') { connected = true; schedule(); connSubs.forEach(f => f(true)); if (!done) { done = true; res(true); } }
-        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') { connected = false; connSubs.forEach(f => f(false)); if (!done) { done = true; res(false); } }
+        if (status === 'SUBSCRIBED') {
+          connected = true; connSubs.forEach(f => f(true));
+          if (!tracked) { tracked = true; ch.track({ on: Date.now() }).catch(() => { tracked = false; }); }
+          ch.send({ type: 'broadcast', event: 'hello', payload: { k: me } }).catch(() => { }); schedule();
+          if (!done) { done = true; res(true); }
+        }
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') { connected = false; tracked = false; connSubs.forEach(f => f(false)); if (!done) { done = true; res(false); } }
       });
       setTimeout(() => { if (!done) { done = true; res(false); } }, 10000);
     });
     if (!ok) { console.warn('Sottoportico: stanza dal vivo non raggiungibile'); try { sb.removeChannel(ch); } catch (e) { } return null; }
-    addEventListener('pagehide', () => { try { ch.untrack(); sb.removeChannel(ch); } catch (e) { } });
+    addEventListener('pagehide', () => { try { ch.send({ type: 'broadcast', event: 'bye', payload: { k: me } }); ch.untrack(); sb.removeChannel(ch); } catch (e) { } });
     return {
       presence: async (patch) => { myP = { ...myP, ...patch }; for (const k in patch) if (patch[k] === null) delete myP[k]; schedule(); },
       onPeers: (fn) => { subs.push(fn); setTimeout(build, 0); return () => { subs = subs.filter(x => x !== fn); }; },
