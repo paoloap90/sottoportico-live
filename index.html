@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Sottoportico Live</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{--bord:#4A1C26;--amber:#EEA640;--ink:#161616;--paper:#F2EADA}
+  html,body{margin:0;height:100%;background:#0e0f14;overflow:hidden;font-family:'Bricolage Grotesque',system-ui,sans-serif;color:var(--paper)}
+  #c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  #top{position:fixed;left:0;right:0;top:0;padding:14px 16px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;background:linear-gradient(#0e0f14b0,#0e0f1400)}
+  #brand{font-weight:800;font-stretch:75%;font-size:22px;letter-spacing:.02em}
+  #brand small{display:block;font-family:'IBM Plex Mono',monospace;font-weight:400;font-size:11px;color:var(--amber);letter-spacing:.14em}
+  #topr{display:flex;flex-direction:column;align-items:flex-end;gap:6px;pointer-events:auto}
+  #hint{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#F2EADAcc;text-align:right}
+  #panel{position:fixed;left:12px;right:12px;bottom:12px;max-width:640px;margin:0 auto;background:#121216e6;border:1px solid #F2EADA33;border-radius:14px;padding:14px 14px 12px;box-sizing:border-box;backdrop-filter:blur(8px)}
+  #step{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--amber);letter-spacing:.12em}
+  #title{font-size:26px;font-weight:800;font-stretch:80%;margin:2px 0 4px;line-height:1.05}
+  #desc{font-size:15px;line-height:1.4;margin:0 0 12px;color:#F2EADAe6;min-height:42px}
+  #controls{display:flex;gap:8px;align-items:center}
+  button{white-space:nowrap;font:inherit;cursor:pointer;border-radius:10px;border:1px solid #F2EADA55;background:transparent;color:var(--paper);min-height:44px;padding:0 14px;font-size:15px;font-weight:600}
+  button.primary{background:var(--amber);color:var(--ink);border-color:var(--amber)}
+  button.small{min-height:32px;font-size:12px;padding:0 10px;font-family:'IBM Plex Mono',monospace;font-weight:500;background:#121216cc}
+  button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+  #dots{display:flex;gap:6px;flex:1;justify-content:center}
+  #dots button{width:12px;height:12px;min-height:0;padding:0;border-radius:50%;border:1px solid var(--paper)}
+  #dots button[aria-current="true"]{background:var(--amber);border-color:var(--amber)}
+  #loading{position:fixed;inset:0;display:flex;flex-direction:column;gap:16px;align-items:center;justify-content:center;background:#0e0f14;z-index:5;padding:24px;text-align:center}
+  #loading .t{font-weight:800;font-stretch:75%;font-size:40px}
+  #loading .s{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--amber)}
+  #bar{width:min(320px,80vw);height:6px;background:#F2EADA22;border-radius:3px;overflow:hidden}
+  #bar{position:relative}
+  #bar i{display:block;height:100%;width:0;background:var(--amber);transition:width .2s}
+  #bar::after{content:'';position:absolute;inset:0;width:40%;background:linear-gradient(90deg,transparent,#fff8,transparent);animation:shim 1.3s linear infinite}
+  @keyframes shim{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+  .vinyl{width:84px;height:84px;border-radius:50%;background:repeating-radial-gradient(circle,#1b1c22 0 2px,#111217 2px 4px);box-shadow:0 0 0 2px #F2EADA22;position:relative;animation:spin 1.8s linear infinite}
+  .vinyl::before{content:'';position:absolute;inset:30px;border-radius:50%;background:var(--amber)}
+  .vinyl::after{content:'';position:absolute;left:50%;top:6px;width:2px;height:16px;background:#F2EADA55;transform:translateX(-50%)}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #ltime{font-family:'IBM Plex Mono',monospace;font-size:12px;color:#F2EADA88}
+  #credits{position:fixed;inset:0;background:#0e0f14ee;z-index:6;display:none;align-items:center;justify-content:center;padding:20px}
+  #credits[open]{display:flex}
+  #credits .box{max-width:620px;max-height:80vh;overflow:auto;background:#16161a;border:1px solid #F2EADA33;border-radius:14px;padding:20px;font-size:13px;line-height:1.5}
+  #credits h2{margin:0 0 10px;font-size:22px}
+  #credits a{color:var(--amber)}
+
+  #panel[hidden]{display:none}
+  #modes{position:fixed;inset:0;z-index:4;display:flex;align-items:center;justify-content:center;background:#0e0f14b8;backdrop-filter:blur(4px);padding:20px}
+  #modes[hidden]{display:none}
+  .mbox{width:min(420px,100%);display:flex;flex-direction:column;gap:12px;text-align:center}
+  .mt{font-weight:800;font-stretch:75%;font-size:44px;line-height:1}
+  .ms{margin:0 0 8px;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--amber)}
+  button.big{min-height:72px;font-size:20px;font-weight:800;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;white-space:normal}
+  button.big small{font-size:13px;font-weight:500;opacity:.85}
+  @media (max-width:520px){#title{font-size:22px}#desc{font-size:14px}#hint{display:none}button{padding:0 10px;font-size:14px}#dots{gap:4px}#dots button{width:10px;height:10px}}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Vista 3D realistica del locale Sottoportico al Piazzale Bestat di Taranto"></canvas>
+<div id="top">
+  <div id="brand">SOTTOPORTICO<small>BIRRE · DISCHI · CARTA — PIAZZALE BESTAT, TARANTO</small></div>
+  <div id="topr"><div id="hint">trascina per guardarti intorno · pizzica per zoom</div><button class="small" id="credBtn">Crediti</button></div>
+</div>
+<div id="panel" role="region" aria-label="Tappe del tour" hidden>
+  <div id="step"></div>
+  <div id="title"></div>
+  <p id="desc"></p>
+  <div id="controls">
+    <button id="prev" aria-label="Tappa precedente">‹</button>
+    <div id="dots"></div>
+    <button id="play" aria-pressed="false">▶ Auto</button>
+    <button id="next" class="primary" aria-label="Tappa successiva">Avanti ›</button>
+  </div>
+</div>
+<div id="modes" hidden>
+  <div class="mbox">
+    <div class="mt">SOTTOPORTICO</div>
+    <p class="ms">Piazzale Bestat, Taranto</p>
+    <button id="mLive" class="primary big">Entra live<small>con i tuoi amici: avatar, birre, dischi, chat</small></button>
+    <button id="mTour" class="big">Tour guidato<small>nove tappe tra piazza, bancone e lounge</small></button>
+  </div>
+</div>
+<div id="loading"><div class="vinyl" aria-hidden="true"></div><div class="t">SOTTOPORTICO</div><div id="bar"><i></i></div><div class="s" id="lmsg">Apro le saracinesche… (circa 40 MB, meglio in Wi-Fi)</div><div id="ltime">Sto caricando · 0 s</div></div>
+<div id="credits" role="dialog" aria-modal="true" aria-label="Crediti">
+  <div class="box">
+    <h2>Crediti</h2>
+    <p>Concept e ambientazione: Sottoportico, locale sotto i portici del Centro Direzionale Bestat (arch. Luigi Piccinato e Vera Consoli), di fronte alla Biblioteca civica Pietro Acclavio. Edifici del contesto ricostruiti in modo semplificato.</p>
+    <p><strong>Persone e animazioni:</strong> Microsoft Rocketbox Avatar Library, licenza MIT — <a href="https://github.com/microsoft/Microsoft-Rocketbox">github.com/microsoft/Microsoft-Rocketbox</a></p>
+    <p><strong>Modelli 3D</strong> (Khronos glTF Sample Assets, <a href="https://github.com/KhronosGroup/glTF-Sample-Assets">github.com/KhronosGroup/glTF-Sample-Assets</a>):<br>
+    Commercial Refrigerator — CC BY 4.0, Eric Chadwick / Darmstadt Graphics Group, da “Commercial Fridge” di Sean Thomas.<br>
+    Diffuse Transmission Plant — CC BY 4.0, Darmstadt Graphics Group; originale Rico Cilliers, CC0 Poly Haven.<br>
+    Sheen Wood Leather Sofa — CC BY 4.0, Darmstadt Graphics Group; originale Fran Calvente, CC0 Poly Haven.<br>
+    Chair Damask Purplegold, Glam Velvet Sofa, Sheen Chair, Anisotropy Barn Lamp — CC BY 4.0, Wayfair / Eric Chadwick.<br>
+    Glass Vase Flowers — CC0, Eric Chadwick e Rico Cilliers.</p>
+    <p><strong>Texture e luce:</strong> esempi three.js (MIT); cielo fisico three.js (Sky).</p>
+    <p><strong>Motore:</strong> three.js (MIT). <strong>Stanza dal vivo:</strong> Supabase Realtime.</p>
+    <button id="credClose" class="primary">Chiudi</button>
+  </div>
+</div>
+<script src="claude-shim.js"></script>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
